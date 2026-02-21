@@ -91,6 +91,7 @@ const player = {
 // ---- INPUT ----
 const keys = {};
 const keysJustPressed = {};
+let showHelp = false;
 window.addEventListener('keydown', e => { if (!keys[e.code]) keysJustPressed[e.code] = true; keys[e.code] = true; e.preventDefault(); });
 window.addEventListener('keyup', e => { keys[e.code] = false; e.preventDefault(); });
 
@@ -605,6 +606,7 @@ function update(dt) {
   }
   if (restartConfirmTimer > 0) restartConfirmTimer -= dt;
   if (keysJustPressed['KeyQ']) showDebug = !showDebug;
+  if (keysJustPressed['KeyZ']) showHelp = !showHelp;
   if (keysJustPressed['KeyP'] && !gameOver) paused = !paused;
   // Clear per-frame edge-triggered keys
   for (const k in keysJustPressed) delete keysJustPressed[k];
@@ -2260,14 +2262,53 @@ function render() {
   }
 
   // Controls hint (fades out after 60s)
-  if (gameTime < 62) {
+  if (gameTime < 62 && !showHelp) {
     const hintAlpha = gameTime < 58 ? 0.5 : 0.5 * Math.max(0, 1 - (gameTime - 58) / 4);
     if (hintAlpha > 0.01) {
       ctx.fillStyle = `rgba(255,255,255,${hintAlpha.toFixed(2)})`;
       ctx.font = '14px monospace';
       ctx.textAlign = 'center';
-      ctx.fillText('WASD + Space | Shift: shoot', BASE_W / 2, 18);
+      ctx.fillText('WASD + Space | Shift: shoot | Z: help', BASE_W / 2, 18);
     }
+  }
+
+  // Help overlay
+  if (showHelp) {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(0, 0, BASE_W, BASE_H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#fc0';
+    ctx.font = 'bold 18px monospace';
+    ctx.fillText('HOW TO PLAY', BASE_W / 2, 60);
+    ctx.fillStyle = '#fff';
+    ctx.font = '11px monospace';
+    const helpLines = [
+      'Pick up the yellow stuff (see minimap or',
+      'arrows on ground) and transport it to the',
+      'purple dropoff points.',
+      '',
+      'Delivery grants half a health point and a',
+      'BIG score depending on the distance, time',
+      'left and weight of the item.',
+      '',
+      'Weight makes the ship less responsive.',
+      '',
+      'This was coded like jank, so if your screen',
+      'gets all pixelated, try to get out of that area!',
+      '',
+      'Press Z to dismiss.',
+    ];
+    for (let i = 0; i < helpLines.length; i++) {
+      ctx.fillText(helpLines[i], BASE_W / 2, 90 + i * 16);
+    }
+    ctx.textAlign = 'left';
+  } else if (gameTime >= 62) {
+    // Persistent small hint after controls fade
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('Z: help', BASE_W / 2, 14);
+    ctx.textAlign = 'left';
   }
 
   // Debug HUD (toggle with Q)
