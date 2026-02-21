@@ -1,0 +1,15 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { overflow: hidden; background: #000; color: #fff; font-family: monospace; }
+canvas { display: block; }
+#menu { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; background: radial-gradient(ellipse at center, #0a0a2e 0%, #000 70%); }
+#menu h1 { font-size: 3em; margin-bottom: 0.3em; color: #0af; text-shadow: 0 0 20px rgba(0,170,255,0.5); letter-spacing: 0.15em; }
+#menu .subtitle { font-size: 0.9em; color: #556; margin-bottom: 1em; }
+#total-score { font-size: 1.6em; color: #0af; text-shadow: 0 0 12px rgba(0,170,255,0.4); margin-bottom: 1.2em; letter-spacing: 0.08em; display: none; }
+#menu .level-btn { display: flex; justify-content: space-between; align-items: center; width: 400px; font-size: 1.3em; padding: 0.6em 1.2em; margin: 0.3em; cursor: pointer; background: #111; color: #aaa; border: 1px solid #333; font-family: monospace; text-align: left; transition: all 0.15s; }
+#menu .level-btn:hover { border-color: #0af; color: #fff; background: #0a1a2a; }
+#menu .level-btn.cleared { border-color: #0a4; color: #0d6; }
+#menu .level-name { flex: 1; }
+#menu .level-score { color: #fc0; font-size: 0.8em; text-align: right; margin-left: 1em; }
+#menu .controls { margin-top: 2em; color: #445; font-size: 0.8em; text-align: center; line-height: 1.6; }
+#hud { position: absolute; top: 0; left: 0; width: 100%; pointer-events: none; display: none; }
+#game-canvas { display: none; }
