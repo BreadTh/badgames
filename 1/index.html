@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Combine</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<h1>COMBINE</h1>
+<div class="top-bar">
+  <div class="mode-bar" id="mode-bar"></div>
+  <button id="restart">&#8635; Reset</button>
+</div>
+<p class="instructions">Drag or press 0-8,a-z or arrow keys and space to combine. Backspace to undo.</p>
+<div class="timer-bar">
+  <span id="timer">0:00</span>
+  <span id="timer-label"></span>
+</div>
+<div class="main-area">
+  <div class="grid" id="grid"></div>
+  <div class="hints-panel" id="hints-panel">
+    <div class="hints-header">Recipes</div>
+    <div class="hints-list" id="hints-list"></div>
+  </div>
+</div>
+<div class="log" id="log"></div>
+<div id="win-overlay" class="win-overlay hidden">
+  <div class="win-box">
+    <div class="win-emoji" id="win-crown"></div>
+    <div class="win-title">You win!</div>
+    <div id="win-time" class="win-time"></div>
+    <button id="win-restart">Play Again</button>
+  </div>
+</div>
+
+<script src="../shared/icon-data.js"></script>
+<script>const GAME_MODES = {};</script>
+<script src="recipes6.js"></script>
+<script src="recipes8.js"></script>
+<script src="recipes5.js"></script>
+<script>
+// ════════════════════════════════════════
+// KEYBOARD MAP
+// ════════════════════════════════════════
+const KEY_ROWS = ['12345678', 'qwertyui', 'asdfghjk', 'zxcvbnm,'];
+const KEY_TO_INDEX = {};
+const INDEX_TO_KEY = {};
+KEY_ROWS.forEach((row, r) => {
+  for (let c = 0; c < row.length; c++) {
+    const idx = r * 8 + c;
+    KEY_TO_INDEX[row[c]] = idx;
+    INDEX_TO_KEY[idx] = row[c];
+  }
+});
+
+// ════════════════════════════════════════
+// GAME MODE
+// ════════════════════════════════════════
+let currentModeId = null;
+let ITEMS = {};
+let RECIPES = [];
+let START_ITEMS = [];
+let WIN_ITEM = '';
+let SAVE_VERSION = 0;
+function saveKeyForMode(modeId) {
+  return 'combine_save_' + modeId;
+}
+
+function loadMode(modeId) {
+  const mode = GAME_MODES[modeId];
+  if (!mode) return;
+  currentModeId = modeId;
+  ITEMS = mode.items;
+  RECIPES = mode.recipes;
+  START_ITEMS = mode.startItems;
+  WIN_ITEM = mode.winItem;
+  SAVE_VERSION = mode.saveVersion;
+  // Apply maxDur defaults
+  for (const v of Object.values(ITEMS)) {
+    if (!v.maxDur) v.maxDur = 1;
+  }
+  localStorage.setItem('combine_mode', modeId);
+}
+
+function switchMode(modeId) {
+  if (modeId === currentModeId) return;
+  loadMode(modeId);
+
+  // Reset game state for the new mode
+  for (let i = 0; i < GRID_SIZE; i++) grid[i] = null;
+  undoStack = [];
+  discoveredItems = new Set();
+  won = false;
+  selectedIndex = null;
+
+  const loaded = loadGame();
+  if (loaded) {
+    speedrunValid = false;
+  } else {
+    START_ITEMS.forEach((id, i) => { grid[i] = makeItem(id); });
+    discoverGridItems();
+    speedrunValid = true;
+    startTime = Date.now();
+    elapsed = 0;
+  }
+
+  // Reset slot tracking so render rebuilds everything (use sentinel, not null,
+  // because empty slots also have curId===null and would skip the update)
+  for (let i = 0; i < GRID_SIZE; i++) prevSlotIds[i] = '__force__';
+
+  logEl.innerHTML = '';
+  document.getElementById('win-overlay').classList.add('hidden');
+  renderModeBar();
+  updateWinIcon();
+  renderTimerState();
+  startTimer();
+  render();
+}
+
+function renderModeBar() {
+  const bar = document.getElementById('mode-bar');
+  bar.innerHTML = '';
+  for (const [id, mode] of Object.entries(GAME_MODES)) {
+    const btn = document.createElement('button');
+    btn.className = 'mode-btn' + (id === currentModeId ? ' active' : '');
+    btn.textContent = mode.name;
+    btn.addEventListener('click', () => switchMode(id));
+    bar.appendChild(btn);
+  }
+}
+
+function updateWinIcon() {
+  const wc = document.getElementById('win-crown');
+  wc.innerHTML = '';
+  const ci = document.createElement('span');
+  ci.className = 'item-icon';
+  const crownUrl = `url('${ICON_DATA[ITEMS[WIN_ITEM].icon]}')`;
+  ci.style.webkitMaskImage = crownUrl;
+  ci.style.maskImage = crownUrl;
+  wc.appendChild(ci);
+}
+
+// ════════════════════════════════════════
+// GAME STATE
+// ════════════════════════════════════════
+const GRID_COLS = 8;
+const GRID_ROWS = 4;
+const GRID_SIZE = GRID_COLS * GRID_ROWS;
+
+const grid = new Array(GRID_SIZE).fill(null);
+let undoStack = [];
+let selectedIndex = null;
+let cursorIndex = null; // arrow-key cursor, separate from selection
+let discoveredItems = new Set();
+
+function discoverItem(id) {
+  discoveredItems.add(id);
+}
+
+function isDiscovered(id) {
+  return discoveredItems.has(id);
+}
+
+function discoverGridItems() {
+  for (let i = 0; i < GRID_SIZE; i++) {
+    if (grid[i]) discoverItem(grid[i].id);
+  }
+}
+
+// ── Timer / Win ──
+let speedrunValid = true;
+let startTime = Date.now();
+let elapsed = 0;
+let won = false;
+let timerInterval = null;
+
+const timerEl = document.getElementById('timer');
+const timerLabelEl = document.getElementById('timer-label');
+
+function formatTime(ms) {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  const tenths = Math.floor((ms % 1000) / 100);
+  return `${m}:${String(sec).padStart(2, '0')}.${tenths}`;
+}
+
+function updateTimer() {
+  if (won) return;
+  elapsed = Date.now() - startTime;
+  timerEl.textContent = formatTime(elapsed);
+}
+
+function startTimer() {
+  if (timerInterval) clearInterval(timerInterval);
+  timerInterval = setInterval(updateTimer, 100);
+  updateTimer();
+}
+
+function stopTimer() {
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+}
+
+function renderTimerState() {
+  const bar = document.querySelector('.timer-bar');
+  if (!speedrunValid && !won) {
+    bar.style.display = 'none';
+    return;
+  }
+  bar.style.display = 'flex';
+  timerEl.classList.toggle('finished', won);
+  const crownUrl = `url('${ICON_DATA[ITEMS[WIN_ITEM].icon]}')`;
+  if (won) {
+    timerLabelEl.textContent = 'finished';
+  } else {
+    timerLabelEl.innerHTML = 'craft the ';
+    const ci = document.createElement('span');
+    ci.className = 'item-icon';
+    ci.style.cssText = 'color:#c4b5fd;font-size:1.1rem';
+    ci.style.webkitMaskImage = crownUrl;
+    ci.style.maskImage = crownUrl;
+    timerLabelEl.appendChild(ci);
+  }
+}
+
+function checkWin() {
+  if (won) return;
+  for (let i = 0; i < GRID_SIZE; i++) {
+    if (grid[i] && grid[i].id === WIN_ITEM) {
+      won = true;
+      elapsed = Date.now() - startTime;
+      stopTimer();
+      timerEl.textContent = formatTime(elapsed);
+      renderTimerState();
+      showWinScreen();
+      return;
+    }
+  }
+}
+
+function showWinScreen() {
+  const overlay = document.getElementById('win-overlay');
+  const timeEl = document.getElementById('win-time');
+  if (speedrunValid) {
+    timeEl.textContent = formatTime(elapsed);
+    timeEl.style.display = '';
+  } else {
+    timeEl.style.display = 'none';
+  }
+  overlay.classList.remove('hidden');
+}
+
+function makeItem(id) {
+  return { id, dur: ITEMS[id].maxDur };
+}
+
+// ── Save / Load ──
+function saveGame() {
+  localStorage.setItem(saveKeyForMode(currentModeId), JSON.stringify({
+    version: SAVE_VERSION, grid, undoStack,
+    discoveredItems: [...discoveredItems]
+  }));
+}
+
+function loadGame() {
+  const raw = localStorage.getItem(saveKeyForMode(currentModeId));
+  if (!raw) return false;
+  try {
+    const save = JSON.parse(raw);
+    // Accept v1 saves (migrate) or current version
+    if (save.version !== SAVE_VERSION && save.version !== 1) return false;
+    for (let i = 0; i < GRID_SIZE; i++) grid[i] = save.grid[i];
+    undoStack = save.undoStack || [];
+    // Restore or rebuild discoveredItems
+    discoveredItems = new Set(save.discoveredItems || []);
+    discoverGridItems();
+    return true;
+  } catch { return false; }
+}
+
+function resetGame() {
+  for (let i = 0; i < GRID_SIZE; i++) grid[i] = null;
+  START_ITEMS.forEach((id, i) => { grid[i] = makeItem(id); });
+  undoStack = [];
+  discoveredItems = new Set();
+  discoverGridItems();
+  won = false;
+  speedrunValid = true;
+  startTime = Date.now();
+  elapsed = 0;
+  clearSelection();
+  logEl.innerHTML = '';
+  document.getElementById('win-overlay').classList.add('hidden');
+  renderTimerState();
+  startTimer();
+  saveGame();
+  render();
+}
+
+// Load saved mode or default to first available
+{
+  const savedMode = localStorage.getItem('combine_mode');
+  const modeIds = Object.keys(GAME_MODES);
+  loadMode(savedMode && GAME_MODES[savedMode] ? savedMode : modeIds[0]);
+}
+const loaded = loadGame();
+if (loaded) {
+  // Resumed from save — speedrun is invalid
+  speedrunValid = false;
+} else {
+  START_ITEMS.forEach((id, i) => { grid[i] = makeItem(id); });
+  discoverGridItems();
+}
+renderTimerState();
+
+function snapshotGrid() {
+  undoStack.push(grid.map(item => item ? { ...item } : null));
+}
+
+function undo() {
+  if (undoStack.length === 0) return;
+  const snapshot = undoStack.pop();
+  for (let i = 0; i < GRID_SIZE; i++) grid[i] = snapshot[i];
+  clearSelection();
+  logEl.innerHTML = '';
+  addLog('Undone.', 'fail');
+  saveGame();
+  render();
+}
+
+// ════════════════════════════════════════
+// RECIPE LOOKUP
+// ════════════════════════════════════════
+function findRecipe(aId, bId) {
+  for (const r of RECIPES) {
+    if ((r.a === aId && r.b === bId) || (r.a === bId && r.b === aId)) {
+      return r;
+    }
+  }
+  return null;
+}
+
+function getCombinablePartners(itemId) {
+  const partners = new Set();
+  for (const r of RECIPES) {
+    if (r.a === itemId) partners.add(r.b);
+    if (r.b === itemId) partners.add(r.a);
+  }
+  return partners;
+}
+
+// ════════════════════════════════════════
+// DOM
+// ════════════════════════════════════════
+const gridEl = document.getElementById('grid');
+const logEl = document.getElementById('log');
+let dragSourceIndex = null;
+
+// Track previous slot state for fade transitions
+const prevSlotIds = new Array(GRID_SIZE).fill(null);
+
+function initGrid() {
+  for (let i = 0; i < GRID_SIZE; i++) {
+    const slot = document.createElement('div');
+    slot.className = 'slot';
+    slot.dataset.index = i;
+
+    // Key label
+    const keyEl = document.createElement('span');
+    keyEl.className = 'key';
+    keyEl.textContent = INDEX_TO_KEY[i];
+    slot.appendChild(keyEl);
+
+    // Content wrapper for fade transitions
+    const content = document.createElement('div');
+    content.className = 'slot-content';
+    slot.appendChild(content);
+
+    slot.addEventListener('click', () => selectSlot(i));
+
+    slot.addEventListener('dragstart', (e) => {
+      if (!grid[i]) { e.preventDefault(); return; }
+      clearSelection();
+      dragSourceIndex = i;
+      slot.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', i.toString());
+      showCombinableHints(i);
+    });
+
+    slot.addEventListener('dragend', () => {
+      slot.classList.remove('dragging');
+      dragSourceIndex = null;
+      clearDragOver();
+      clearCombinableHints();
+    });
+
+    slot.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      if (dragSourceIndex === null || dragSourceIndex === i) return;
+      clearDragOver();
+      slot.classList.add(grid[i] ? 'drag-over' : 'drag-over-empty');
+    });
+
+    slot.addEventListener('dragleave', () => {
+      slot.classList.remove('drag-over', 'drag-over-empty');
+    });
+
+    slot.addEventListener('drop', (e) => {
+      e.preventDefault();
+      clearDragOver();
+      clearCombinableHints();
+      const srcIdx = parseInt(e.dataTransfer.getData('text/plain'));
+      if (isNaN(srcIdx) || srcIdx === i) return;
+      handleCombine(srcIdx, i);
+    });
+
+    gridEl.appendChild(slot);
+  }
+}
+
+function fillSlotContent(content, item) {
+  content.innerHTML = '';
+  if (!item) return;
+  const def = ITEMS[item.id];
+
+  if (def.maxDur > 1) {
+    const durEl = document.createElement('span');
+    durEl.className = 'dur';
+    const pct = item.dur / def.maxDur;
+    durEl.classList.add(pct > 0.66 ? 'dur-high' : pct > 0.33 ? 'dur-mid' : 'dur-low');
+    durEl.textContent = item.dur;
+    content.appendChild(durEl);
+  }
+
+  const icon = document.createElement('span');
+  icon.className = 'item-icon';
+  const iconUrl = `url('${ICON_DATA[def.icon]}')`;
+  icon.style.webkitMaskImage = iconUrl;
+  icon.style.maskImage = iconUrl;
+  if (def.color) icon.style.color = def.color;
+  content.appendChild(icon);
+
+  const label = document.createElement('div');
+  label.className = 'label';
+  label.textContent = def.name;
+  content.appendChild(label);
+}
+
+function render() {
+  for (let i = 0; i < GRID_SIZE; i++) {
+    const slot = gridEl.children[i];
+    const item = grid[i];
+    const curId = item ? item.id + ':' + item.dur : null;
+    const content = slot.querySelector('.slot-content');
+
+    // Update slot classes
+    slot.classList.toggle('cursored', i === cursorIndex);
+    slot.classList.toggle('selected', i === selectedIndex);
+    slot.classList.toggle('has-item', !!item);
+    slot.draggable = !!item;
+
+    // If content changed, animate the transition
+    if (curId !== prevSlotIds[i]) {
+      if (prevSlotIds[i] !== null && content.children.length > 0) {
+        // Fade out old content, then swap in new
+        content.classList.add('fading-out');
+        const idx = i;
+        setTimeout(() => {
+          fillSlotContent(content, grid[idx]);
+          content.classList.remove('fading-out');
+          if (grid[idx]) content.style.animation = 'fade-in 0.15s ease-out';
+          else content.style.animation = '';
+        }, 150);
+      } else {
+        // No old content or first render — just fill and fade in
+        fillSlotContent(content, item);
+        if (item) content.style.animation = 'fade-in 0.15s ease-out';
+        else content.style.animation = '';
+      }
+      prevSlotIds[i] = curId;
+    }
+  }
+
+  // Re-apply combinable hints if something is selected
+  if (selectedIndex !== null && grid[selectedIndex]) {
+    showCombinableHints(selectedIndex);
+  }
+
+  renderHints();
+}
+
+function clearDragOver() {
+  gridEl.querySelectorAll('.drag-over, .drag-over-empty').forEach(el => {
+    el.classList.remove('drag-over', 'drag-over-empty');
+  });
+}
+
+function showCombinableHints(srcIdx) {
+  if (!grid[srcIdx]) return;
+  const partners = getCombinablePartners(grid[srcIdx].id);
+  for (let i = 0; i < GRID_SIZE; i++) {
+    if (i !== srcIdx && grid[i] && partners.has(grid[i].id)) {
+      gridEl.children[i].classList.add('combinable');
+    }
+  }
+}
+
+function clearCombinableHints() {
+  gridEl.querySelectorAll('.combinable').forEach(el => el.classList.remove('combinable'));
+}
+
+// ════════════════════════════════════════
+// KEYBOARD / CLICK SELECTION
+// ════════════════════════════════════════
+function selectSlot(idx) {
+  if (selectedIndex === null) {
+    // Nothing selected yet — select this if it has an item
+    if (!grid[idx]) return;
+    selectedIndex = idx;
+    render();
+    return;
+  }
+
+  if (selectedIndex === idx) {
+    // Clicked same slot — deselect
+    clearSelection();
+    render();
+    return;
+  }
+
+  // Second selection — combine or move
+  const srcIdx = selectedIndex;
+  const ok = handleCombine(srcIdx, idx);
+  if (ok) clearSelection();
+  render();
+}
+
+function clearSelection() {
+  selectedIndex = null;
+  clearCombinableHints();
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    clearSelection();
+    cursorIndex = null;
+    render();
+    return;
+  }
+  if (e.key === 'Backspace' || ((e.ctrlKey || e.metaKey) && e.key === 'z')) {
+    e.preventDefault();
+    undo();
+    return;
+  }
+
+  // Arrow key navigation
+  if (e.key.startsWith('Arrow')) {
+    e.preventDefault();
+    if (cursorIndex === null) { cursorIndex = 0; render(); return; }
+    const col = cursorIndex % GRID_COLS;
+    const row = Math.floor(cursorIndex / GRID_COLS);
+    let nc = col, nr = row;
+    if (e.key === 'ArrowLeft')  nc = (col - 1 + GRID_COLS) % GRID_COLS;
+    if (e.key === 'ArrowRight') nc = (col + 1) % GRID_COLS;
+    if (e.key === 'ArrowUp')    nr = (row - 1 + GRID_ROWS) % GRID_ROWS;
+    if (e.key === 'ArrowDown')  nr = (row + 1) % GRID_ROWS;
+    cursorIndex = nr * GRID_COLS + nc;
+    render();
+    return;
+  }
+
+  // Space selects at cursor
+  if (e.key === ' ' && cursorIndex !== null) {
+    e.preventDefault();
+    selectSlot(cursorIndex);
+    return;
+  }
+
+  const key = e.key.toLowerCase();
+  if (key in KEY_TO_INDEX) {
+    e.preventDefault();
+    selectSlot(KEY_TO_INDEX[key]);
+  }
+});
+
+// ════════════════════════════════════════
+// COMBINE / MOVE LOGIC
+// ════════════════════════════════════════
+function handleCombine(srcIdx, dstIdx) {
+  const srcItem = grid[srcIdx];
+  const dstItem = grid[dstIdx];
+  if (!srcItem) return false;
+
+  // Move to empty slot
+  if (!dstItem) {
+    snapshotGrid();
+    grid[dstIdx] = srcItem;
+    grid[srcIdx] = null;
+    saveGame();
+    render();
+    return true;
+  }
+
+  // Stack same-type items (combine durability)
+  if (srcItem.id === dstItem.id && ITEMS[srcItem.id].maxDur > 1) {
+    const maxDur = ITEMS[srcItem.id].maxDur;
+    if (dstItem.dur >= maxDur) {
+      // Already at max, can't stack
+      render();
+      animateSlot(dstIdx, 'combine-fail');
+      addLog(`${ITEMS[dstItem.id].name} already at full durability`, 'fail');
+      return false;
+    }
+    snapshotGrid();
+    const combined = Math.min(srcItem.dur + dstItem.dur, maxDur);
+    grid[dstIdx] = { id: dstItem.id, dur: combined };
+    grid[srcIdx] = null;
+    render();
+    animateSlot(dstIdx, 'combine-success');
+    addLog(`Stacked ${ITEMS[srcItem.id].name} (${combined}/${maxDur})`, 'success');
+    saveGame();
+    return true;
+  }
+
+  // Attempt combine
+  const recipe = findRecipe(srcItem.id, dstItem.id);
+  if (!recipe) {
+    render();
+    animateSlot(dstIdx, 'combine-fail');
+    addLog(`${ITEMS[srcItem.id].name} + ${ITEMS[dstItem.id].name} = nothing`, 'fail');
+    return false;
+  }
+
+  const srcName = ITEMS[srcItem.id].name;
+  const dstName = ITEMS[dstItem.id].name;
+
+  snapshotGrid();
+
+  // Determine which grid item maps to recipe a/b
+  const aCost = recipe.aCost ?? 999;
+  const bCost = recipe.bCost ?? 999;
+
+  let aIdx, bIdx;
+  if (srcItem.id === recipe.a && dstItem.id === recipe.b) {
+    aIdx = srcIdx; bIdx = dstIdx;
+  } else {
+    aIdx = dstIdx; bIdx = srcIdx;
+  }
+
+  // Apply durability costs
+  grid[aIdx].dur -= aCost;
+  grid[bIdx].dur -= bCost;
+
+  // Collect freed slots — dstIdx first (that's where the player is looking)
+  const freedSlots = [];
+  for (const idx of [dstIdx, srcIdx]) {
+    if (grid[idx] && grid[idx].dur <= 0) {
+      grid[idx] = null;
+      freedSlots.push(idx);
+    }
+  }
+
+  // Place outputs: first into freed slots (in order), then nearest empty
+  const outputs = [...recipe.give];
+  const animSlots = [];
+
+  for (const itemId of outputs) {
+    if (freedSlots.length > 0) {
+      const slot = freedSlots.shift();
+      grid[slot] = makeItem(itemId);
+      animSlots.push(slot);
+    } else {
+      const empty = findNearestEmpty(dstIdx);
+      if (empty !== -1) {
+        grid[empty] = makeItem(itemId);
+        animSlots.push(empty);
+      } else {
+        addLog(`No room for ${ITEMS[itemId].name}! Lost.`, 'fail');
+      }
+    }
+  }
+
+  discoverGridItems();
+  render();
+
+  for (const s of animSlots) animateSlot(s, 'combine-success');
+  if (grid[aIdx]) animateSlot(aIdx, 'combine-success');
+  if (grid[bIdx] && bIdx !== aIdx) animateSlot(bIdx, 'combine-success');
+
+  const outNames = recipe.give.map(id => ITEMS[id].name).join(' + ');
+  addLog(`${srcName} + ${dstName} → ${outNames || 'nothing'}`, 'success');
+  saveGame();
+  checkWin();
+  return true;
+}
+
+function findNearestEmpty(fromIdx) {
+  for (let dist = 0; dist < GRID_SIZE; dist++) {
+    for (let i = 0; i < GRID_SIZE; i++) {
+      if (grid[i] === null && Math.abs(i - fromIdx) === dist) {
+        return i;
+      }
+    }
+  }
+  return -1;
+}
+
+function animateSlot(idx, cls) {
+  const slot = gridEl.children[idx];
+  if (!slot) return;
+  slot.classList.remove(cls);
+  void slot.offsetWidth;
+  slot.classList.add(cls);
+}
+
+function addLog(msg, type) {
+  logEl.innerHTML = '';
+  const entry = document.createElement('div');
+  entry.className = `log-entry ${type}`;
+  entry.textContent = msg;
+  logEl.appendChild(entry);
+}
+
+// ════════════════════════════════════════
+// RECIPE HINTS
+// ════════════════════════════════════════
+function renderHints() {
+  const hintsListEl = document.getElementById('hints-list');
+  hintsListEl.innerHTML = '';
+
+  // Gather item IDs currently on the board (including tool upgrade aliases)
+  const boardIds = new Set();
+  for (let i = 0; i < GRID_SIZE; i++) {
+    if (grid[i]) boardIds.add(grid[i].id);
+  }
+
+  const rows = [];
+
+  for (const recipe of RECIPES) {
+    const aDisc = isDiscovered(recipe.a);
+    const bDisc = isDiscovered(recipe.b);
+
+    // Skip if neither ingredient discovered
+    if (!aDisc && !bDisc) continue;
+
+    // Skip if neither ingredient is currently on the board
+    const aOnBoard = boardIds.has(recipe.a);
+    const bOnBoard = boardIds.has(recipe.b);
+    if (!aOnBoard && !bOnBoard) continue;
+
+    // Both ingredients on board = craftable now
+    const craftable = aOnBoard && bOnBoard;
+
+    // Has undiscovered outputs?
+    const hasNewOutput = recipe.give.some(id => !isDiscovered(id));
+    rows.push({ recipe, aDisc, bDisc, craftable, hasNewOutput });
+  }
+
+  // Check if a selected item should boost matching recipes
+  const selId = (selectedIndex !== null && grid[selectedIndex])
+    ? grid[selectedIndex].id : null;
+
+  // Sort: selected-item recipes first, then craftable+new, craftable, partial+new, partial
+  rows.sort((a, b) => {
+    const asel = selId ? (selId === a.recipe.a || selId === a.recipe.b ? 1 : 0) : 0;
+    const bsel = selId ? (selId === b.recipe.a || selId === b.recipe.b ? 1 : 0) : 0;
+    if (asel !== bsel) return bsel - asel;
+    const aScore = (a.craftable ? 2 : 0) + (a.hasNewOutput ? 1 : 0);
+    const bScore = (b.craftable ? 2 : 0) + (b.hasNewOutput ? 1 : 0);
+    return bScore - aScore;
+  });
+
+  for (const { recipe, aDisc, bDisc, craftable } of rows) {
+    const row = document.createElement('div');
+    row.className = 'hint-row' + (craftable ? ' craftable' : '');
+
+    // Input A
+    row.appendChild(aDisc ? makeHintItem(recipe.a) : makeUnknown());
+    row.appendChild(makeSep('+'));
+    // Input B
+    row.appendChild(bDisc ? makeHintItem(recipe.b) : makeUnknown());
+    row.appendChild(makeSep('→'));
+    // Outputs
+    const outputs = recipe.give;
+    for (let i = 0; i < outputs.length; i++) {
+      if (i > 0) row.appendChild(makeSep('+'));
+      if (isDiscovered(outputs[i])) {
+        row.appendChild(makeHintItem(outputs[i]));
+      } else {
+        row.appendChild(makeUnknown());
+      }
+    }
+
+    hintsListEl.appendChild(row);
+  }
+}
+
+function makeHintItem(id) {
+  const span = document.createElement('span');
+  span.className = 'hint-item';
+  const def = ITEMS[id];
+  const icon = document.createElement('span');
+  icon.className = 'item-icon';
+  const iconUrl = `url('${ICON_DATA[def.icon]}')`;
+  icon.style.webkitMaskImage = iconUrl;
+  icon.style.maskImage = iconUrl;
+  if (def.color) icon.style.color = def.color;
+  span.appendChild(icon);
+  const name = document.createElement('span');
+  name.className = 'hint-name';
+  name.textContent = def.name;
+  span.appendChild(name);
+  return span;
+}
+
+function makeUnknown() {
+  const span = document.createElement('span');
+  span.className = 'hint-unknown';
+  span.textContent = '???';
+  return span;
+}
+
+function makeSep(text) {
+  const span = document.createElement('span');
+  span.className = 'hint-sep';
+  span.textContent = text;
+  return span;
+}
+
+// ════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════
+updateWinIcon();
+renderModeBar();
+
+document.getElementById('restart').addEventListener('click', () => {
+  if (confirm('Start over? This clears everything.')) resetGame();
+});
+
+document.getElementById('win-restart').addEventListener('click', () => {
+  resetGame();
+});
+
+function resize() {
+  const root = document.documentElement.style;
+  const sw = window.innerWidth / 1280;
+  const sh = window.innerHeight / 900;
+  root.setProperty('--sw', sw);
+  root.setProperty('--sh', sh);
+
+  const mainArea = document.querySelector('.main-area');
+  const hints = document.querySelector('.hints-panel');
+  const availH = mainArea.clientHeight;
+  const hintsW = hints.offsetWidth + 16 * sw;
+  const availW = mainArea.clientWidth - hintsW;
+
+  const GAP = 4;
+  const cellFromW = (availW - 7 * GAP) / 8;
+  const cellFromH = (availH - 3 * GAP) / 4;
+  const cell = Math.floor(Math.min(cellFromW, cellFromH));
+
+  gridEl.style.width = (cell * 8 + GAP * 7) + 'px';
+  root.setProperty('--cell', cell + 'px');
+}
+
+window.addEventListener('resize', resize);
+initGrid();
+startTimer();
+render();
+resize();
+</script>
+</body>
+</html>
