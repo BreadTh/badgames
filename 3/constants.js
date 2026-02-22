@@ -1,7 +1,7 @@
 // ---- STATE ----
 var state = 'menu'; // menu | playing | dead | winning | won
 var currentLevel = 0;
-var clearedLevels = {};
+var clearedLevels = JSON.parse(localStorage.getItem('spaceRunnerCleared') || '{}');
 var score = 0;
 var levelTimer = 0;
 var levelTimerMax = 0;
@@ -32,6 +32,7 @@ var TRACK_WIDTH = LANES * LANE_WIDTH;
 var GRAVITY = -50;
 var JUMP_FORCE = 20;
 var HOLD_GRAVITY = 0.85; // gravity multiplier while holding space (sustain)
+var GLIDE_GRAVITY = 0.65; // gravity multiplier while holding space and falling
 var JUMP_CUT_VY = 10; // velocity cap when space released early
 var AIR_CONTROL = 0.3; // fraction of normal move speed
 var AIR_CONTROL_FREE = 0.45; // air control when not sustaining
@@ -46,28 +47,25 @@ var DECEL_RATE = 36;
 var FUEL_ACCEL_COST = 0.3; // per second while accelerating (below max speed)
 var FUEL_CRUISE_COST = 0.05; // per speed per second at constant speed
 var FUEL_JUMP_COST = 1.5; // flat cost on jump launch
-var FUEL_AIR_COST = 0.4; // per second while airborne holding space
+var FUEL_AIR_COST = 0.4; // per second while airborne holding space (sustain)
+var FUEL_GLIDE_COST = 2.4; // per second while gliding (falling + space)
 var FUEL_EMPTY_DECEL = 3; // speed loss per second with no fuel
 var OXY_DRAIN = 2; // per second always
-var OXY_REFILL = 30; // per second on oxygen block
+var OXY_REFILL = 22.5; // per second on oxygen block (75% of original 30)
 var FUEL_REFILL = 25;
 var FUEL_DRAIN_RATE = 15;
 var OXY_DRAIN_BLOCK_RATE = 15;
 var KILL_SPEED_THRESHOLD = 28; // head-on collision kill speed
-var PLAYER_H = 0.95;
+var PLAYER_H = 0.475;
 var PLAYER_W = 0.6; // collision width
 var PLAYER_D = 1.2; // collision depth (Z)
 
-// Debug
-var debugCollider; // wireframe box for player collider
-var debugRowPlanes = []; // row boundary markers
-var debugMode = false;
 
 // Three.js
 var scene, camera, renderer;
 var clock = new THREE.Clock();
 var shipMesh;
-var headlight, underglow;
+var headlight, underglow, accelFlameLight, cruiseFlameLight;
 var starField;
 var engineMatRef;
 

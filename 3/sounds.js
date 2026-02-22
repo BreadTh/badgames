@@ -195,14 +195,14 @@ function updateSounds(dt) {
   }
 
   // Accel: raw pressed throttle — heavy roughness
-  var accelHeld = (keys['ArrowUp'] || keys['KeyW']) && fuel > 0;
+  var accelHeld = (keys['ArrowUp'] || keys['KeyW']) && fuel > 0 && oxygen > 0;
   if (sndAccel) {
-    if (accelHeld && grounded) {
+    if (accelHeld && (grounded || !grounded)) {
       var aPct = playerSpeed / MAX_SPEED;
+      var aVol = grounded ? 1.0 : 0.60;
       setSndFreq(sndAccel, 100 + aPct * 60);
-      sndAccel.gain.gain.value = 0.04;
-      // aggressive tremolo — engine being PRESSED
-      if (sndAccel.lfoGain) sndAccel.lfoGain.gain.value = 0.012 + aPct * 0.025;
+      sndAccel.gain.gain.value = 0.04 * aVol;
+      if (sndAccel.lfoGain) sndAccel.lfoGain.gain.value = (0.012 + aPct * 0.025) * aVol;
       if (sndAccel.lfo) sndAccel.lfo.frequency.value = 20 + aPct * 15;
     } else {
       sndAccel.gain.gain.value = 0;
@@ -214,9 +214,10 @@ function updateSounds(dt) {
   var decelHeld = (keys['ArrowDown'] || keys['KeyS']);
   if (sndDecel) {
     var brakePct = playerSpeed / MAX_SPEED;
-    if (decelHeld && grounded && playerSpeed > 0) {
+    if (decelHeld && playerSpeed > 0) {
+      var dVol = grounded ? 1.0 : 0.30;
       setSndFreq(sndDecel, 300 + brakePct * 250);
-      sndDecel.gain.gain.value = 0.01 + brakePct * 0.025;
+      sndDecel.gain.gain.value = (0.01 + brakePct * 0.025) * dVol;
     } else {
       sndDecel.gain.gain.value = 0;
     }

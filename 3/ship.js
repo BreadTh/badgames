@@ -1,3 +1,112 @@
+// ---- SHADOW ----
+var shadowQuads = [];
+var SHADOW_RX = 0.5;
+var SHADOW_RZ = 0.4;
+
+function createShadow() {
+  var c = document.createElement('canvas');
+  c.width = 64; c.height = 64;
+  var ctx = c.getContext('2d');
+  var g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, 'rgba(0,0,0,0.4)');
+  g.addColorStop(0.5, 'rgba(0,0,0,0.25)');
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 64, 64);
+  var tex = new THREE.CanvasTexture(c);
+
+  for (var i = 0; i < 4; i++) {
+    var geo = new THREE.BufferGeometry();
+    var pos = new Float32Array(12);
+    var uvs = new Float32Array(8);
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geo.setIndex([0, 1, 2, 2, 3, 0]);
+    var mat = new THREE.MeshBasicMaterial({
+      map: tex, transparent: true, depthWrite: false,
+      polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1
+    });
+    var mesh = new THREE.Mesh(geo, mat);
+    mesh.frustumCulled = false;
+    mesh.visible = false;
+    mesh.renderOrder = 1;
+    scene.add(mesh);
+    shadowQuads.push(mesh);
+  }
+}
+
+function updateShadow() {
+  if (!alive || state === 'menu') {
+    for (var h = 0; h < 4; h++) shadowQuads[h].visible = false;
+    return;
+  }
+
+  var sMinX = playerX - SHADOW_RX;
+  var sMaxX = playerX + SHADOW_RX;
+  var sMinZ = playerZ - SHADOW_RZ;
+  var sMaxZ = playerZ + SHADOW_RZ;
+
+  var laneMin = xToLane(sMinX);
+  var laneMax = xToLane(sMaxX);
+  var rowFront = zToRow(sMinZ);
+  var rowBack = zToRow(sMaxZ);
+
+  var qi = 0;
+  for (var lane = laneMin; lane <= laneMax && qi < 4; lane++) {
+    if (lane < 0 || lane >= LANES) continue;
+    for (var row = rowBack; row <= rowFront && qi < 4; row++) {
+      var col = getColumn(row, lane);
+      var groundY = null;
+      for (var bi = 0; bi < col.length; bi++) {
+        var top = blockTop(col[bi]);
+        if (top <= playerY + 0.15) {
+          if (groundY === null || top > groundY) groundY = top;
+        }
+      }
+      if (groundY === null) continue;
+
+      var tMinX = laneToX(lane) - LANE_WIDTH / 2;
+      var tMaxX = laneToX(lane) + LANE_WIDTH / 2;
+      var tMinZ = rowToZ(row) - BLOCK_SIZE / 2;
+      var tMaxZ = rowToZ(row) + BLOCK_SIZE / 2;
+
+      var cMinX = Math.max(sMinX, tMinX);
+      var cMaxX = Math.min(sMaxX, tMaxX);
+      var cMinZ = Math.max(sMinZ, tMinZ);
+      var cMaxZ = Math.min(sMaxZ, tMaxZ);
+      if (cMinX >= cMaxX || cMinZ >= cMaxZ) continue;
+
+      var u0 = (cMinX - sMinX) / (sMaxX - sMinX);
+      var u1 = (cMaxX - sMinX) / (sMaxX - sMinX);
+      var v0 = (cMinZ - sMinZ) / (sMaxZ - sMinZ);
+      var v1 = (cMaxZ - sMinZ) / (sMaxZ - sMinZ);
+
+      var sy = groundY + 0.01;
+      var p = shadowQuads[qi].geometry.attributes.position.array;
+      p[0] = cMinX; p[1] = sy; p[2] = cMaxZ;
+      p[3] = cMaxX; p[4] = sy; p[5] = cMaxZ;
+      p[6] = cMaxX; p[7] = sy; p[8] = cMinZ;
+      p[9] = cMinX; p[10] = sy; p[11] = cMinZ;
+      shadowQuads[qi].geometry.attributes.position.needsUpdate = true;
+
+      var uv = shadowQuads[qi].geometry.attributes.uv.array;
+      uv[0] = u0; uv[1] = v1;
+      uv[2] = u1; uv[3] = v1;
+      uv[4] = u1; uv[5] = v0;
+      uv[6] = u0; uv[7] = v0;
+      shadowQuads[qi].geometry.attributes.uv.needsUpdate = true;
+
+      // Fade with height above ground
+      var height = playerY - groundY;
+      var opacity = Math.max(0, 1 - height / 6);
+      shadowQuads[qi].material.opacity = opacity;
+      shadowQuads[qi].visible = opacity > 0.01;
+      qi++;
+    }
+  }
+  for (; qi < 4; qi++) shadowQuads[qi].visible = false;
+}
+
 // ---- SHIP MESH ----
 function createShip() {
   shipMesh = new THREE.Group();
@@ -7,104 +116,266 @@ function createShip() {
   var engineMat = new THREE.MeshBasicMaterial({ color: 0xff5500 });
   engineMatRef = engineMat;
 
-  // Main body - tapered fuselage
-  var bodyGeo = new THREE.BoxGeometry(0.5, 0.25, 2.0);
-  var body = new THREE.Mesh(bodyGeo, bodyMat);
-  shipMesh.add(body);
+  // Main fuselage — custom tapered shape
+  // Cross-sections from nose (z=-2.2) to tail (z=1.0)
+  // Each section: [z, halfWidth, topY, botY]
+  var sections = [
+    [-2.2, 0.00, 0.02, -0.02],  // nose tip
+    [-1.6, 0.10, 0.10, -0.08],  // nose mid
+    [-1.0, 0.22, 0.18, -0.12],  // nose base
+    [-0.3, 0.28, 0.22, -0.14],  // cockpit area (widest top)
+    [ 0.3, 0.26, 0.18, -0.14],  // mid body
+    [ 0.55, 0.14, 0.10, -0.10], // rear (ends at engine front)
+  ];
+  var fuseVerts = [];
+  var fuseIdx = [];
+  // Build side panels between adjacent sections
+  for (var si = 0; si < sections.length; si++) {
+    var s = sections[si];
+    // 4 verts per section: top-left, top-right, bot-right, bot-left
+    fuseVerts.push(-s[1], s[2], s[0]); // TL
+    fuseVerts.push( s[1], s[2], s[0]); // TR
+    fuseVerts.push( s[1], s[3], s[0]); // BR
+    fuseVerts.push(-s[1], s[3], s[0]); // BL
+    if (si > 0) {
+      var c = si * 4, p = (si - 1) * 4;
+      // top face
+      fuseIdx.push(p+0, p+1, c+1, c+1, c+0, p+0);
+      // bottom face
+      fuseIdx.push(p+3, c+3, c+2, c+2, p+2, p+3);
+      // left face
+      fuseIdx.push(p+0, c+0, c+3, c+3, p+3, p+0);
+      // right face
+      fuseIdx.push(p+1, p+2, c+2, c+2, c+1, p+1);
+    }
+  }
+  // No tail cap — open for exhaust visibility
+  var fuseGeo = new THREE.BufferGeometry();
+  fuseGeo.setAttribute('position', new THREE.Float32BufferAttribute(fuseVerts, 3));
+  fuseGeo.setIndex(fuseIdx);
+  fuseGeo.computeVertexNormals();
+  var fuselage = new THREE.Mesh(fuseGeo, bodyMat);
+  shipMesh.add(fuselage);
 
-  // Nose - pointy cone
-  var noseGeo = new THREE.ConeGeometry(0.25, 1.0, 6);
-  noseGeo.rotateX(Math.PI / 2);
-  var nose = new THREE.Mesh(noseGeo, bodyMat);
-  nose.position.z = -1.4;
-  shipMesh.add(nose);
+  // Nose ridge — sharp spine along the top
+  var ridgeVerts = new Float32Array([
+    0.00, 0.20, -1.8,   // front tip (raised)
+    -0.04, 0.18, -1.0,  // left base
+     0.04, 0.18, -1.0,  // right base
+    0.00, 0.24, -1.0,   // peak
+  ]);
+  var ridgeIdx = [0,1,3, 0,3,2, 0,2,1, 2,3,1]; // double-sided
+  var ridgeGeo = new THREE.BufferGeometry();
+  ridgeGeo.setAttribute('position', new THREE.BufferAttribute(ridgeVerts, 3));
+  ridgeGeo.setIndex(ridgeIdx);
+  ridgeGeo.computeVertexNormals();
+  shipMesh.add(new THREE.Mesh(ridgeGeo, accentMat));
 
-  // Cockpit dome
-  var cockpitGeo = new THREE.SphereGeometry(0.18, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.5);
+  // Intake scoops — small wedges on each side of the nose
+  function makeIntake(side) {
+    var s = side;
+    var v = new Float32Array([
+      s * 0.22, -0.06, -0.8,
+      s * 0.22, -0.06, -0.4,
+      s * 0.30,  0.02, -0.4,
+      s * 0.30,  0.02, -0.6,
+    ]);
+    var idx = [0,1,2, 2,3,0, 2,1,0, 0,3,2];
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(v, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    return new THREE.Mesh(geo, accentMat);
+  }
+  shipMesh.add(makeIntake(-1));
+  shipMesh.add(makeIntake(1));
+
+  // Cockpit canopy — elongated dome
+  var cockpitGeo = new THREE.SphereGeometry(0.16, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.5);
+  cockpitGeo.scale(1.0, 1.0, 2.0);
   var cockpit = new THREE.Mesh(cockpitGeo, glowMat);
-  cockpit.position.set(0, 0.15, -0.5);
+  cockpit.position.set(0, 0.18, -0.6);
   shipMesh.add(cockpit);
 
-  // Main wings - swept back
-  var wingGeo = new THREE.BoxGeometry(2.2, 0.04, 0.7);
-  var wings = new THREE.Mesh(wingGeo, accentMat);
-  wings.position.z = 0.3;
-  shipMesh.add(wings);
+  // Wings — swept-back, tapered quads
+  // Each wing: root (near body) is wide+forward, tip is narrow+back+up
+  function makeWing(side) {
+    var s = side; // -1 = left, 1 = right
+    var verts = new Float32Array([
+      // root leading edge
+      s * 0.20, 0.00, -0.3,
+      // root trailing edge
+      s * 0.20, 0.00,  0.5,
+      // tip trailing edge (swept back, up, thin)
+      s * 1.30, 0.12,  0.7,
+      // tip leading edge
+      s * 1.30, 0.12,  0.3,
+      // top surface offset (slight thickness)
+      s * 0.20, 0.04, -0.3,
+      s * 0.20, 0.04,  0.5,
+      s * 1.30, 0.16,  0.7,
+      s * 1.30, 0.16,  0.3,
+    ]);
+    var idx = [
+      // bottom face
+      0,1,2, 2,3,0,
+      // top face
+      4,7,6, 6,5,4,
+      // front edge
+      0,3,7, 7,4,0,
+      // back edge
+      1,5,6, 6,2,1,
+      // tip
+      3,2,6, 6,7,3,
+    ];
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    return new THREE.Mesh(geo, accentMat);
+  }
+  shipMesh.add(makeWing(-1));
+  shipMesh.add(makeWing(1));
 
-  // Wing tips - angled up
-  var tipGeo = new THREE.BoxGeometry(0.04, 0.3, 0.3);
-  var tipL = new THREE.Mesh(tipGeo, accentMat);
-  tipL.position.set(-1.1, 0.15, 0.3);
-  shipMesh.add(tipL);
-  var tipR = new THREE.Mesh(tipGeo, accentMat);
-  tipR.position.set(1.1, 0.15, 0.3);
-  shipMesh.add(tipR);
+  // Wing tip fins — angled upward at the tips
+  function makeWingTip(side) {
+    var s = side;
+    var verts = new Float32Array([
+      s * 1.28, 0.12, 0.3,
+      s * 1.28, 0.12, 0.7,
+      s * 1.35, 0.45, 0.6,
+      s * 1.35, 0.45, 0.4,
+    ]);
+    var idx = [0,1,2, 2,3,0, 2,1,0, 0,3,2]; // double-sided
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    return new THREE.Mesh(geo, accentMat);
+  }
+  shipMesh.add(makeWingTip(-1));
+  shipMesh.add(makeWingTip(1));
 
-  // Tail fins
-  var finGeo = new THREE.BoxGeometry(0.04, 0.4, 0.5);
-  var finL = new THREE.Mesh(finGeo, accentMat);
-  finL.position.set(-0.2, 0.2, 0.9);
-  shipMesh.add(finL);
-  var finR = new THREE.Mesh(finGeo, accentMat);
-  finR.position.set(0.2, 0.2, 0.9);
-  shipMesh.add(finR);
+  // V-tail fins — angled outward
+  function makeTailFin(side) {
+    var s = side;
+    var verts = new Float32Array([
+      s * 0.08, 0.10, 0.6,   // root bottom
+      s * 0.08, 0.10, 1.1,   // root top-back
+      s * 0.30, 0.50, 1.0,   // tip top
+      s * 0.30, 0.50, 0.7,   // tip front
+    ]);
+    var idx = [0,1,2, 2,3,0, 2,1,0, 0,3,2]; // double-sided
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    return new THREE.Mesh(geo, accentMat);
+  }
+  shipMesh.add(makeTailFin(-1));
+  shipMesh.add(makeTailFin(1));
 
-  // Engines - twin glowing orbs
-  var engGeo = new THREE.SphereGeometry(0.12, 8, 8);
-  var engL = new THREE.Mesh(engGeo, engineMat);
-  engL.position.set(-0.2, -0.02, 1.0);
-  shipMesh.add(engL);
-  var engR = new THREE.Mesh(engGeo, engineMat);
-  engR.position.set(0.2, -0.02, 1.0);
-  shipMesh.add(engR);
+  // Single central engine nacelle (open-ended to show exhaust)
+  var engGeo = new THREE.CylinderGeometry(0.14, 0.18, 0.6, 10, 1, true);
+  engGeo.rotateX(Math.PI / 2);
+  var engine = new THREE.Mesh(engGeo, accentMat);
+  engine.position.set(0, -0.02, 0.85);
+  shipMesh.add(engine);
 
-  // Wing glow strips
-  var stripGeo = new THREE.BoxGeometry(1.6, 0.02, 0.04);
-  var stripL = new THREE.Mesh(stripGeo, glowMat);
-  stripL.position.set(0, 0.04, 0.1);
-  shipMesh.add(stripL);
+  // Engine exhaust — hollow black interior
+  var exhaustMat = new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.BackSide });
+  var exhaustGeo = new THREE.CylinderGeometry(0.12, 0.16, 0.6, 10, 1, true);
+  exhaustGeo.rotateX(Math.PI / 2);
+  var exhaust = new THREE.Mesh(exhaustGeo, exhaustMat);
+  exhaust.position.set(0, -0.02, 0.85);
+  shipMesh.add(exhaust);
 
-  // Engine flame cones (visible when accelerating/cruising)
-  var flameMat = new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0.8 });
-  var flameGeo = new THREE.ConeGeometry(0.08, 0.6, 6);
-  flameGeo.rotateX(-Math.PI / 2);
-  var flameL = new THREE.Mesh(flameGeo, flameMat);
-  flameL.position.set(-0.2, -0.02, 1.3);
-  flameL.visible = false;
-  shipMesh.add(flameL);
-  var flameR = new THREE.Mesh(flameGeo, flameMat);
-  flameR.position.set(0.2, -0.02, 1.3);
-  flameR.visible = false;
-  shipMesh.add(flameR);
-  shipMesh._flameL = flameL;
-  shipMesh._flameR = flameR;
-  shipMesh._flameMat = flameMat;
+  // Black disc inside exhaust to hide fuselage behind it
+  var discMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+  var discGeo = new THREE.CircleGeometry(0.14, 10);
+  var disc = new THREE.Mesh(discGeo, discMat);
+  disc.position.set(0, -0.02, 0.85);
+  shipMesh.add(disc);
+  engineMatRef = null;
+
+  // Wing glow strips — along wing leading edges
+  function makeGlowStrip(side) {
+    var s = side;
+    var verts = new Float32Array([
+      s * 0.22, 0.02, -0.25,
+      s * 1.20, 0.13, 0.35,
+      s * 1.20, 0.15, 0.35,
+      s * 0.22, 0.04, -0.25,
+    ]);
+    var idx = [0,1,2, 2,3,0, 2,1,0, 0,3,2];
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    return new THREE.Mesh(geo, glowMat);
+  }
+  shipMesh.add(makeGlowStrip(-1));
+  shipMesh.add(makeGlowStrip(1));
 
   shipMesh.scale.set(0.7, 0.7, 0.35);
+  // Tag meshes so we can find them for debris (skip non-Mesh children)
+  shipMesh.traverse(function(c) { if (c.isMesh) c.userData.shipPart = true; });
 
   scene.add(shipMesh);
 
-  // Debug collider wireframe (drawn in world space, not parented to ship)
-  var debugGeo = new THREE.BoxGeometry(PLAYER_W, PLAYER_H, PLAYER_D);
-  var debugMat = new THREE.LineBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.5 });
-  var debugEdges = new THREE.EdgesGeometry(debugGeo);
-  debugCollider = new THREE.LineSegments(debugEdges, debugMat);
-  debugCollider.visible = false;
-  scene.add(debugCollider);
+}
 
-  // Debug row planes — up to 3 row markers showing which rows the cube overlaps
-  debugRowPlanes = [];
-  var rowPlaneMat = new THREE.LineBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.4 });
-  for (var rp = 0; rp < 3; rp++) {
-    var rpGeo = new THREE.BufferGeometry();
-    var hw2 = TRACK_WIDTH / 2;
-    var verts = new Float32Array([
-      -hw2, 0, 0,  hw2, 0, 0,  hw2, BLOCK_SIZE * 0.5, 0,  -hw2, BLOCK_SIZE * 0.5, 0,  -hw2, 0, 0
-    ]);
-    rpGeo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
-    var rpLine = new THREE.Line(rpGeo, rowPlaneMat);
-    rpLine.visible = false;
-    scene.add(rpLine);
-    debugRowPlanes.push(rpLine);
+// ---- SHIP DEBRIS (explosion) ----
+var shipDebris = [];
+
+function explodeShip() {
+  clearShipDebris();
+  shipMesh.visible = false;
+  // Collect all mesh children, clone them as independent scene objects
+  var parts = [];
+  shipMesh.traverse(function(c) { if (c.isMesh && c.userData.shipPart) parts.push(c); });
+  for (var i = 0; i < parts.length; i++) {
+    var p = parts[i];
+    var clone = p.clone();
+    // Get world transform
+    var wPos = new THREE.Vector3();
+    p.getWorldPosition(wPos);
+    var wQuat = new THREE.Quaternion();
+    p.getWorldQuaternion(wQuat);
+    var wScale = new THREE.Vector3();
+    p.getWorldScale(wScale);
+    clone.position.copy(wPos);
+    clone.quaternion.copy(wQuat);
+    clone.scale.copy(wScale);
+    // Random velocity + current ship speed
+    var vx = (Math.random() - 0.5) * 8;
+    var vy = Math.random() * 6 + 2;
+    var vz = -deathSpeed + (Math.random() - 0.5) * 8;
+    // Random spin
+    var sx = (Math.random() - 0.5) * 12;
+    var sy = (Math.random() - 0.5) * 12;
+    var sz = (Math.random() - 0.5) * 12;
+    scene.add(clone);
+    shipDebris.push({ mesh: clone, vx: vx, vy: vy, vz: vz, sx: sx, sy: sy, sz: sz });
   }
+}
+
+function updateShipDebris(dt) {
+  for (var i = 0; i < shipDebris.length; i++) {
+    var d = shipDebris[i];
+    d.vy -= 15 * dt; // gravity
+    d.mesh.position.x += d.vx * dt;
+    d.mesh.position.y += d.vy * dt;
+    d.mesh.position.z += d.vz * dt;
+    d.mesh.rotation.x += d.sx * dt;
+    d.mesh.rotation.y += d.sy * dt;
+    d.mesh.rotation.z += d.sz * dt;
+  }
+}
+
+function clearShipDebris() {
+  for (var i = 0; i < shipDebris.length; i++) {
+    scene.remove(shipDebris[i].mesh);
+  }
+  shipDebris = [];
 }

@@ -27,18 +27,25 @@ function pointInBlock(x, y, rowIdx) {
   return null;
 }
 
+var deathSpeed = 0;
+var frozenKeys = null;
+var glideLockedIn = false;
 function die(reason) {
   if (!alive) return;
   alive = false;
   state = 'dead';
+  deathSpeed = playerSpeed;
   stopContinuousSounds();
   if (reason === 'crash' || reason === 'kill') {
     createExplosion(playerX, playerY + 0.5, playerZ);
     SFX.explode();
+    explodeShip();
+  } else if (reason === 'stranded') {
+    // Ship stays visible, no explosion
   } else {
     SFX.falling();
+    shipMesh.visible = false;
   }
-  shipMesh.visible = false;
   calcAndSaveScore();
 }
 
@@ -47,7 +54,14 @@ function win() {
   stopContinuousSounds();
   winTimer = 2.0;
   clearedLevels[currentLevel] = true;
+  localStorage.setItem('spaceRunnerCleared', JSON.stringify(clearedLevels));
   SFX.win();
+}
+
+// Spend fuel, or oxygen at 2x if out of fuel
+function spendFuel(cost) {
+  if (fuel > 0) fuel = Math.max(0, fuel - cost);
+  else oxygen = Math.max(0, oxygen - cost * 2);
 }
 
 // ---- PLAYER UPDATE ----
@@ -55,273 +69,357 @@ function updatePlayer(dt) {
   if (!alive) return;
 
   var hw = PLAYER_W / 2;
+  var noOxygen = oxygen <= 0;
+  var noFuel = fuel <= 0;
+  // Oxygen out: freeze controls as if player passed out holding whatever they held
+  if (noOxygen && !frozenKeys) {
+    frozenKeys = {};
+    for (var k in keys) frozenKeys[k] = keys[k];
+  }
+  if (!noOxygen) frozenKeys = null;
+  var inp = noOxygen ? (frozenKeys || {}) : keys;
+  var hasPropellant = fuel > 0 || oxygen > 0;
+  var noControl = !hasPropellant;
 
   // ---- INPUT: acceleration/deceleration ----
-  // Only when grounded, except: slight wall-escape accel when airborne + stopped at a wall
-  var canAccel = grounded;
-  var wallEscape = false;
-  if (!grounded && playerSpeed === 0) {
-    // Check if there's a wall directly ahead we jumped over
-    var feHw = PLAYER_W / 2;
-    var feZ = playerZ - PLAYER_D / 2;
-    var feRow = zToRow(feZ);
-    var feBlocked = false;
-    for (var fei = 0; fei < 2; fei++) {
-      var feCheckRow = feRow + fei;
-      if (pointInBlock(playerX - feHw, playerY, feCheckRow) ||
-          pointInBlock(playerX + feHw, playerY, feCheckRow)) {
-        feBlocked = true; break;
+  var accel = false;
+  if (!noControl) {
+    // Only when grounded, except: slight wall-escape accel when airborne + stopped at a wall
+    var canAccel = grounded;
+    var wallEscape = false;
+    if (!grounded && playerSpeed === 0) {
+      var feHw = PLAYER_W / 2;
+      var feZ = playerZ - PLAYER_D / 2;
+      var feRow = zToRow(feZ);
+      var feBlocked = false;
+      for (var fei = 0; fei < 2; fei++) {
+        var feCheckRow = feRow + fei;
+        if (pointInBlock(playerX - feHw, playerY, feCheckRow) ||
+            pointInBlock(playerX + feHw, playerY, feCheckRow)) {
+          feBlocked = true; break;
+        }
+      }
+      if (!feBlocked) {
+        canAccel = true;
+        wallEscape = true;
       }
     }
-    if (!feBlocked) {
-      // Wall below us but not at our height — we jumped above it
-      canAccel = true;
-      wallEscape = true;
+    if (canAccel && (inp['ArrowUp'] || inp['KeyW'])) {
+      if (hasPropellant) {
+        if (!started) started = true;
+        var rate = wallEscape ? ACCEL_RATE * 0.6 : ACCEL_RATE;
+        playerSpeed = Math.min(MAX_SPEED, playerSpeed + rate * dt);
+        accel = true;
+      }
     }
-  }
-  var accel = false;
-  if (canAccel && (keys['ArrowUp'] || keys['KeyW'])) {
-    if (fuel > 0) {
-      if (!started) started = true;
-      var rate = wallEscape ? ACCEL_RATE * 0.6 : ACCEL_RATE;
-      playerSpeed = Math.min(MAX_SPEED, playerSpeed + rate * dt);
-      accel = true;
+    if (grounded && (inp['ArrowDown'] || inp['KeyS'])) {
+      playerSpeed = Math.max(0, playerSpeed - DECEL_RATE * dt);
     }
-  }
-  if (grounded && (keys['ArrowDown'] || keys['KeyS'])) {
-    playerSpeed = Math.max(0, playerSpeed - DECEL_RATE * dt);
-  }
-  // Slight air speed control — more effective at lower speeds
-  if (!grounded && !wallEscape) {
-    var airSpdMult = AIR_SPEED_CONTROL * (2 - playerSpeed / MAX_SPEED);
-    if ((keys['ArrowUp'] || keys['KeyW']) && fuel > 0) {
-      playerSpeed = Math.min(MAX_SPEED, playerSpeed + ACCEL_RATE * airSpdMult * dt);
-    }
-    if (keys['ArrowDown'] || keys['KeyS']) {
-      playerSpeed = Math.max(0, playerSpeed - DECEL_RATE * airSpdMult * dt);
+    if (!grounded && !wallEscape) {
+      var airSpdMult = AIR_SPEED_CONTROL * (2 - playerSpeed / MAX_SPEED);
+      if ((inp['ArrowUp'] || inp['KeyW']) && hasPropellant) {
+        playerSpeed = Math.min(MAX_SPEED, playerSpeed + ACCEL_RATE * airSpdMult * dt);
+        accel = true;
+      }
+      if (inp['ArrowDown'] || inp['KeyS']) {
+        playerSpeed = Math.max(0, playerSpeed - DECEL_RATE * airSpdMult * dt);
+      }
     }
   }
 
-  // Fuel
+  // Fuel (or oxygen at 3x when out of fuel)
   if (accel && playerSpeed < MAX_SPEED) {
-    fuel = Math.max(0, fuel - FUEL_ACCEL_COST * playerSpeed * dt);
+    spendFuel(FUEL_ACCEL_COST * playerSpeed * dt);
+  } else if (accel && playerSpeed >= MAX_SPEED) {
+    spendFuel(FUEL_ACCEL_COST * 0.5 * playerSpeed * dt);
   } else if (playerSpeed > 0) {
-    fuel = Math.max(0, fuel - FUEL_CRUISE_COST * playerSpeed * dt);
+    spendFuel(FUEL_CRUISE_COST * playerSpeed * dt);
   }
-  if (fuel <= 0 && playerSpeed > 0) {
+  if (!hasPropellant && playerSpeed > 0) {
+    playerSpeed = Math.max(0, playerSpeed - FUEL_EMPTY_DECEL * dt);
+  }
+  // No oxygen: gradually slow down
+  if (noOxygen && playerSpeed > 0) {
     playerSpeed = Math.max(0, playerSpeed - FUEL_EMPTY_DECEL * dt);
   }
 
   // Oxygen (only drains after first acceleration)
   if (started) oxygen = Math.max(0, oxygen - OXY_DRAIN * dt);
 
-  // ---- MOVE Z (position only, collision checked after Y) ----
-  var prevZ = playerZ;
-  playerZ -= playerSpeed * dt;
-
-  // ---- MOVE Y (jump/gravity) — uses updated Z so landing checks correct rows ----
-  // Coyote time: brief window after leaving ground where jump still works
-  if (grounded) {
-    coyoteTimer = COYOTE_TIME;
-  } else {
-    coyoteTimer = Math.max(0, coyoteTimer - dt);
-  }
-  var canJump = grounded || coyoteTimer > 0;
-  if ((keys['Space']) && canJump && fuel > 0) {
-    var speedPctJ = playerSpeed / MAX_SPEED;
-    playerVY = JUMP_FORCE * (0.75 + 0.25 * speedPctJ);
-    grounded = false;
-    coyoteTimer = 0;
-    fuel = Math.max(0, fuel - FUEL_JUMP_COST);
-    SFX.jump();
-  }
-
-  // Variable-height jump: release space early for half height
-  if (!grounded && playerVY > JUMP_CUT_VY && !keys['Space']) {
-    playerVY = JUMP_CUT_VY;
-  }
-  // Sustained jump fuel drain while holding space airborne
-  if (!grounded && keys['Space'] && fuel > 0) {
-    fuel = Math.max(0, fuel - FUEL_AIR_COST * dt);
-  }
-
-  if (!grounded) {
-    var prevY = playerY;
-    var grav = (keys['Space'] && playerVY > 0 && fuel > 0) ? GRAVITY * HOLD_GRAVITY : GRAVITY;
-    playerVY += grav * dt;
-    playerY += playerVY * dt;
-
-    // Landing check — all 4 bottom corners of the cube, each at its own Z row
-    if (playerVY <= 0) {
-      var hd = PLAYER_D / 2;
-      var botCorners = [
-        { x: playerX - hw, r: zToRow(playerZ - hd) }, // front-left
-        { x: playerX + hw, r: zToRow(playerZ - hd) }, // front-right
-        { x: playerX - hw, r: zToRow(playerZ + hd) }, // back-left
-        { x: playerX + hw, r: zToRow(playerZ + hd) }, // back-right
-      ];
-      var landSurface = null;
-      var landBlock = null;
-      for (var ci = 0; ci < 4; ci++) {
-        var col = getColumnAtX(botCorners[ci].r, botCorners[ci].x);
-        for (var bi = 0; bi < col.length; bi++) {
-          var surf = blockTop(col[bi]);
-          if (prevY >= surf - 0.1 && playerY <= surf) {
-            if (landSurface === null || surf > landSurface) {
-              landSurface = surf;
-              landBlock = col[bi];
-            }
-          }
-        }
-      }
-      if (landSurface !== null) {
-        if (landBlock.type === BLOCK.KILL) {
-          die('kill'); return;
-        }
-        playerY = landSurface;
-        spawnSparks(playerX, landSurface, playerZ, Math.min(1, Math.abs(playerVY) / 15));
-        SFX.bounce();
-        if (keys['Space']) {
-          playerVY = JUMP_FORCE;
-          SFX.jump();
-        } else {
-          var bounceV = -playerVY * BOUNCE_FACTOR;
-          if (bounceV > 1.5) {
-            playerVY = bounceV;
-            coyoteTimer = COYOTE_TIME;
-          } else {
-            playerVY = 0;
-            grounded = true;
-          }
-        }
-      }
-    }
-
-    // Head bonk check — all 4 top corners, each at its own Z row
-    // Only pushes player DOWN, never affects X or Z
-    if (playerVY > 0) {
-      var hd2 = PLAYER_D / 2;
-      var topY = playerY + PLAYER_H;
-      var topCorners = [
-        { x: playerX - hw, r: zToRow(playerZ - hd2) },
-        { x: playerX + hw, r: zToRow(playerZ - hd2) },
-        { x: playerX - hw, r: zToRow(playerZ + hd2) },
-        { x: playerX + hw, r: zToRow(playerZ + hd2) },
-      ];
-      var lowestBot = Infinity;
-      var bonked = false;
-      for (var ci2 = 0; ci2 < 4; ci2++) {
-        var col = getColumnAtX(topCorners[ci2].r, topCorners[ci2].x);
-        for (var bi = 0; bi < col.length; bi++) {
-          var bot = blockBottom(col[bi]);
-          var top = blockTop(col[bi]);
-          if (topY >= bot && topY <= top) {
-            bonked = true;
-            if (bot < lowestBot) lowestBot = bot;
-          }
-        }
-      }
-      if (bonked) {
-        if (!sndBonkWas) SFX.bonk();
-        sndBonkWas = true;
-        playerVY = 0;
-        playerY = lowestBot - PLAYER_H;
-      } else {
-        sndBonkWas = false;
-      }
-    }
-  }
-
-  // ---- Z front collision (after Y, so jump height is accounted for) ----
-  if (playerSpeed > 0) {
-    var frontZ = playerZ - PLAYER_D / 2;
-    var fCorners = [
-      { x: playerX - hw, y: playerY },
-      { x: playerX + hw, y: playerY },
-      { x: playerX - hw, y: playerY + PLAYER_H },
-      { x: playerX + hw, y: playerY + PLAYER_H }
-    ];
-    // Check current row and next row (handles zone boundary cases)
-    var baseFrontRow = zToRow(frontZ);
-    for (var fri = 0; fri < 2; fri++) {
-      var checkRow = baseFrontRow + fri;
-      var wallBackFace = rowToZ(checkRow) + BLOCK_SIZE * 0.5;
-      if (frontZ < wallBackFace + 0.1) {
-        var blocked = false;
-        for (var ci = 0; ci < 4; ci++) {
-          if (pointInBlock(fCorners[ci].x, fCorners[ci].y, checkRow)) {
-            blocked = true; break;
-          }
-        }
-        if (blocked) {
-          if (playerSpeed > KILL_SPEED_THRESHOLD) {
-            die('crash'); return;
-          }
-          if (playerSpeed > 2) SFX.collide();
-          playerZ = Math.min(prevZ, wallBackFace + 0.1 + PLAYER_D / 2);
-          playerSpeed = 0;
-          break;
-        }
-      }
-    }
-  }
-
-  // ---- MOVE X (lateral), then resolve side collision ----
-  var sustaining = !grounded && keys['Space'] && playerVY > 0 && fuel > 0;
+  // ---- X INPUT (lateral) — computed before sub-step loop ----
+  var sustainingX = !grounded && inp['Space'] && playerVY > 0 && hasPropellant;
   var speedPctA = playerSpeed / MAX_SPEED;
-  var airMult = sustaining ? AIR_CONTROL : AIR_CONTROL_FREE;
+  var airMult = sustainingX ? AIR_CONTROL : AIR_CONTROL_FREE;
   // Slower = more air control (2x at standstill, 1x at max speed)
   var lateralAccel = grounded ? 40 : 40 * airMult * (2 - speedPctA);
+  if (!hasPropellant) lateralAccel *= 0.25;
   var lateralFriction = grounded ? 8 : 0.5;
   var steering = false;
-  if (keys['ArrowLeft'] || keys['KeyA']) { playerVX -= lateralAccel * dt; steering = true; }
-  if (keys['ArrowRight'] || keys['KeyD']) { playerVX += lateralAccel * dt; steering = true; }
-  if (steering && started) fuel = Math.max(0, fuel - 0.8 * dt);
-  if (grounded && !(keys['ArrowLeft'] || keys['KeyA'] || keys['ArrowRight'] || keys['KeyD'])) {
+  var canSteer = grounded || hasPropellant;
+  if (canSteer && (inp['ArrowLeft'] || inp['KeyA'])) { playerVX -= lateralAccel * dt; steering = true; }
+  if (canSteer && (inp['ArrowRight'] || inp['KeyD'])) { playerVX += lateralAccel * dt; steering = true; }
+  if (steering && started) spendFuel(0.8 * dt);
+  if (grounded && !(inp['ArrowLeft'] || inp['KeyA'] || inp['ArrowRight'] || inp['KeyD'])) {
     playerVX *= Math.max(0, 1 - lateralFriction * dt);
   }
   var maxLateral = 12;
   playerVX = Math.max(-maxLateral, Math.min(maxLateral, playerVX));
 
-  var prevX = playerX;
-  playerX += playerVX * dt;
+  // Coyote time (once per frame)
+  if (grounded) {
+    coyoteTimer = COYOTE_TIME;
+  } else {
+    coyoteTimer = Math.max(0, coyoteTimer - dt);
+  }
+  // Jump initiation (once per frame)
+  var canJump = grounded || coyoteTimer > 0;
+  if ((inp['Space']) && canJump && hasPropellant && !noControl) {
+    var speedPctJ = playerSpeed === 0 ? 1 : playerSpeed / MAX_SPEED;
+    playerVY = JUMP_FORCE * (0.75 + 0.25 * speedPctJ);
+    grounded = false;
+    coyoteTimer = 0;
+    spendFuel(FUEL_JUMP_COST);
+    spawnSparks(playerX, playerY + 0.1, playerZ, 0.6);
+    spawnJumpSparks(playerX, playerY, playerZ);
+    SFX.jump();
+  }
 
+  // ---- SUB-STEPPED MOVEMENT + COLLISION ----
+  // Prevents tunneling through blocks at high speed / low framerate.
+  // Each axis moves in small steps; collision cancels remaining movement on that axis.
+  var MAX_STEP = 0.5;
+  var moveEstZ = playerSpeed * dt;
+  var moveEstX = Math.abs(playerVX * dt);
+  var moveEstY = Math.abs(playerVY * dt);
+  var maxMove = Math.max(moveEstZ, moveEstX, moveEstY);
+  var subSteps = maxMove > MAX_STEP ? Math.ceil(maxMove / MAX_STEP) : 1;
+  var subDt = dt / subSteps;
+  var zBlocked = false;
+  var xBlocked = false;
 
-  // Side collision — check left and right independently across all Z rows
-  var sRows = playerRows();
-  var hitLeft = false, hitRight = false;
-  for (var si = 0; si < sRows.length; si++) {
-    // Left edge corners
-    if (!hitLeft) {
-      if (pointInBlock(playerX - hw, playerY, sRows[si]) ||
-          pointInBlock(playerX - hw, playerY + PLAYER_H, sRows[si])) {
-        hitLeft = true;
+  for (var msi = 0; msi < subSteps; msi++) {
+    // ---- Z MOVE ----
+    var prevZ = playerZ;
+    if (!zBlocked) {
+      playerZ -= playerSpeed * subDt;
+    }
+
+    // ---- Y MOVE (gravity/jump) ----
+    if (!grounded && playerVY > JUMP_CUT_VY && !inp['Space']) {
+      playerVY = JUMP_CUT_VY;
+    }
+    if (!grounded) {
+      var prevY = playerY;
+      var nearGround = false;
+      if (playerVY <= 0) {
+        var gRows2 = playerRows();
+        for (var ng = 0; ng < gRows2.length && !nearGround; ng++) {
+          var ngCol = getColumnAtX(gRows2[ng], playerX);
+          for (var nbi = 0; nbi < ngCol.length; nbi++) {
+            var gTop = blockTop(ngCol[nbi]);
+            if (gTop <= playerY && playerY - gTop < BLOCK_SIZE) { nearGround = true; break; }
+          }
+        }
+      }
+      if (!inp['Space']) glideLockedIn = false;
+      else if (!nearGround && playerVY <= 0) glideLockedIn = true;
+      var gliding = inp['Space'] && playerVY <= 0 && fuel > 0 && (!nearGround || glideLockedIn);
+      var sustaining = inp['Space'] && playerVY > 0 && hasPropellant;
+      if (gliding) {
+        fuel = Math.max(0, fuel - FUEL_GLIDE_COST * subDt);
+      } else if (sustaining) {
+        spendFuel(FUEL_AIR_COST * subDt);
+      }
+      var grav = sustaining ? GRAVITY * HOLD_GRAVITY : gliding ? GRAVITY * GLIDE_GRAVITY : GRAVITY;
+      playerVY += grav * subDt;
+      playerY += playerVY * subDt;
+
+      // Landing check — all 4 bottom corners
+      if (playerVY <= 0) {
+        var hd = PLAYER_D / 2;
+        var botCorners = [
+          { x: playerX - hw, r: zToRow(playerZ - hd) },
+          { x: playerX + hw, r: zToRow(playerZ - hd) },
+          { x: playerX - hw, r: zToRow(playerZ + hd) },
+          { x: playerX + hw, r: zToRow(playerZ + hd) },
+        ];
+        var landSurface = null;
+        var landBlock = null;
+        for (var lci = 0; lci < 4; lci++) {
+          var col = getColumnAtX(botCorners[lci].r, botCorners[lci].x);
+          for (var lbi = 0; lbi < col.length; lbi++) {
+            var surf = blockTop(col[lbi]);
+            if (prevY >= surf - 0.1 && playerY <= surf) {
+              if (landSurface === null || surf > landSurface) {
+                landSurface = surf;
+                landBlock = col[lbi];
+              }
+            }
+          }
+        }
+        if (landSurface !== null) {
+          if (landBlock.type === BLOCK.KILL) {
+            die('kill'); return;
+          }
+          playerY = landSurface;
+          spawnSparks(playerX, landSurface, playerZ, Math.min(1, Math.abs(playerVY) / 15));
+          SFX.bounce();
+          var BOUNCE_ACCEL_IMPULSE = ACCEL_RATE * 0.032;
+          var BOUNCE_DECEL_IMPULSE = DECEL_RATE * 0.032;
+          if ((inp['ArrowUp'] || inp['KeyW']) && hasPropellant) {
+            playerSpeed = Math.min(MAX_SPEED, playerSpeed + BOUNCE_ACCEL_IMPULSE);
+            accel = true;
+          }
+          if (inp['ArrowDown'] || inp['KeyS']) {
+            playerSpeed = Math.max(0, playerSpeed - BOUNCE_DECEL_IMPULSE);
+          }
+          if (inp['Space'] && hasPropellant) {
+            var speedPctB = playerSpeed === 0 ? 1 : playerSpeed / MAX_SPEED;
+            playerVY = JUMP_FORCE * (0.75 + 0.25 * speedPctB);
+            spendFuel(FUEL_JUMP_COST);
+            spawnSparks(playerX, landSurface + 0.1, playerZ, 0.6);
+            spawnJumpSparks(playerX, landSurface, playerZ);
+            SFX.jump();
+          } else {
+            var bounceV = -playerVY * BOUNCE_FACTOR;
+            if (bounceV > 1.5) {
+              playerVY = bounceV;
+              coyoteTimer = COYOTE_TIME;
+            } else {
+              playerVY = 0;
+              grounded = true;
+            }
+          }
+        }
+      }
+
+      // Head bonk check — all 4 top corners
+      if (playerVY > 0) {
+        var hd2 = PLAYER_D / 2;
+        var topY = playerY + PLAYER_H;
+        var topCorners = [
+          { x: playerX - hw, r: zToRow(playerZ - hd2) },
+          { x: playerX + hw, r: zToRow(playerZ - hd2) },
+          { x: playerX - hw, r: zToRow(playerZ + hd2) },
+          { x: playerX + hw, r: zToRow(playerZ + hd2) },
+        ];
+        var lowestBot = Infinity;
+        var bonked = false;
+        for (var bci = 0; bci < 4; bci++) {
+          var col = getColumnAtX(topCorners[bci].r, topCorners[bci].x);
+          for (var bbi = 0; bbi < col.length; bbi++) {
+            var bot = blockBottom(col[bbi]);
+            var top = blockTop(col[bbi]);
+            if (topY >= bot && topY <= top) {
+              bonked = true;
+              if (bot < lowestBot) lowestBot = bot;
+            }
+          }
+        }
+        if (bonked) {
+          if (!sndBonkWas) SFX.bonk();
+          sndBonkWas = true;
+          playerSpeed *= 0.9;
+          playerVY = 0;
+          playerY = lowestBot - PLAYER_H;
+        } else {
+          sndBonkWas = false;
+        }
       }
     }
-    // Right edge corners
-    if (!hitRight) {
-      if (pointInBlock(playerX + hw, playerY, sRows[si]) ||
-          pointInBlock(playerX + hw, playerY + PLAYER_H, sRows[si])) {
-        hitRight = true;
+
+    // ---- Z FRONT COLLISION ----
+    if (!zBlocked && playerSpeed > 0) {
+      var frontZ = playerZ - PLAYER_D / 2;
+      var fCorners = [
+        { x: playerX - hw, y: playerY + 0.15 },
+        { x: playerX + hw, y: playerY + 0.15 },
+        { x: playerX - hw, y: playerY + PLAYER_H * 0.5 },
+        { x: playerX + hw, y: playerY + PLAYER_H * 0.5 },
+      ];
+      var baseFrontRow = zToRow(frontZ);
+      for (var fri = 0; fri < 2; fri++) {
+        var checkRow = baseFrontRow + fri;
+        var wallBackFace = rowToZ(checkRow) + BLOCK_SIZE * 0.5;
+        if (frontZ < wallBackFace + 0.1) {
+          var blocked = false;
+          for (var fci = 0; fci < 4; fci++) {
+            if (pointInBlock(fCorners[fci].x, fCorners[fci].y, checkRow)) {
+              blocked = true; break;
+            }
+          }
+          if (blocked) {
+            if (playerSpeed > KILL_SPEED_THRESHOLD) {
+              die('crash'); return;
+            }
+            if (playerSpeed > 2) SFX.collide();
+            playerZ = Math.min(prevZ, wallBackFace + 0.1 + PLAYER_D / 2);
+            playerSpeed = 0;
+            zBlocked = true;
+            break;
+          }
+        }
       }
     }
-  }
-  if (hitLeft && playerVX <= 0) {
-    if (!sndHitLeftWas) SFX.wallTap();
-    sndHitLeftWas = true;
-    playerX = prevX;
-    playerVX = 0;
-  } else {
-    sndHitLeftWas = false;
-  }
-  if (hitRight && playerVX >= 0) {
-    if (!sndHitRightWas) SFX.wallTap();
-    sndHitRightWas = true;
-    playerX = prevX;
-    playerVX = 0;
-  } else {
-    sndHitRightWas = false;
-  }
+
+    // ---- X MOVE ----
+    var prevX = playerX;
+    if (!xBlocked) {
+      playerX += playerVX * subDt;
+    }
+
+    // ---- SIDE COLLISION ----
+    if (!xBlocked) {
+      var sRows = playerRows();
+      var hitLeft = false, hitRight = false;
+      for (var ssi = 0; ssi < sRows.length; ssi++) {
+        if (!hitLeft) {
+          if (pointInBlock(playerX - hw, playerY, sRows[ssi]) ||
+              pointInBlock(playerX - hw, playerY + PLAYER_H, sRows[ssi])) {
+            hitLeft = true;
+          }
+        }
+        if (!hitRight) {
+          if (pointInBlock(playerX + hw, playerY, sRows[ssi]) ||
+              pointInBlock(playerX + hw, playerY + PLAYER_H, sRows[ssi])) {
+            hitRight = true;
+          }
+        }
+      }
+      var WALL_BOUNCE_THRESHOLD = 4;
+      var WALL_GRIND_DECEL = 24;
+      if (hitLeft && playerVX <= 0) {
+        if (!sndHitLeftWas) SFX.wallTap();
+        sndHitLeftWas = true;
+        playerX = prevX;
+        if (Math.abs(playerVX) > WALL_BOUNCE_THRESHOLD) {
+          playerVX = Math.abs(playerVX) * 0.25;
+          playerSpeed *= 0.9;
+        } else {
+          playerVX = 0;
+          playerSpeed = Math.max(0, playerSpeed - WALL_GRIND_DECEL * dt);
+        }
+        xBlocked = true;
+      } else if (!hitLeft) {
+        sndHitLeftWas = false;
+      }
+      if (hitRight && playerVX >= 0) {
+        if (!sndHitRightWas) SFX.wallTap();
+        sndHitRightWas = true;
+        playerX = prevX;
+        if (Math.abs(playerVX) > WALL_BOUNCE_THRESHOLD) {
+          playerVX = -Math.abs(playerVX) * 0.25;
+          playerSpeed *= 0.9;
+        } else {
+          playerVX = 0;
+          playerSpeed = Math.max(0, playerSpeed - WALL_GRIND_DECEL * dt);
+        }
+        xBlocked = true;
+      } else if (!hitRight) {
+        sndHitRightWas = false;
+      }
+    }
+  } // end sub-step loop
 
   playerLane = xToLane(playerX);
 
@@ -339,24 +437,58 @@ function updatePlayer(dt) {
     if (block) break;
   }
 
-  // Win check — player must be standing on or overlapping a WIN_TUNNEL block
+  // Win check — standing on or passing over any WIN_TUNNEL block
   if (block && block.type === BLOCK.WIN_TUNNEL) {
     win();
+  } else {
+    for (var wi = 0; wi < gRows.length && state === 'playing'; wi++) {
+      var wCol = getColumnAtX(gRows[wi], playerX);
+      for (var wbi = 0; wbi < wCol.length; wbi++) {
+        if (wCol[wbi].type === BLOCK.WIN_TUNNEL && blockTop(wCol[wbi]) <= playerY) {
+          win(); break;
+        }
+      }
+    }
   }
 
+  // Check for fuel/oxygen blocks within half a block left/right
+  var nearFuel = false, nearOxy = false;
+  if (grounded) {
+    var checkXs = [playerX - LANE_WIDTH * 0.5, playerX, playerX + LANE_WIDTH * 0.5];
+    for (var ci = 0; ci < checkXs.length && !(nearFuel && nearOxy); ci++) {
+      for (var gi2 = 0; gi2 < gRows.length && !(nearFuel && nearOxy); gi2++) {
+        var col2 = getColumnAtX(gRows[gi2], checkXs[ci]);
+        for (var bi2 = 0; bi2 < col2.length; bi2++) {
+          if (Math.abs(blockTop(col2[bi2]) - playerY) < 0.2) {
+            if (col2[bi2].type === BLOCK.FUEL) nearFuel = true;
+            if (col2[bi2].type === BLOCK.OXYGEN) nearOxy = true;
+          }
+        }
+      }
+    }
+  }
+
+  // Speed multiplier for refueling: 100% at 0, 200% at kill speed, 300% at max
+  var refillMult = playerSpeed <= KILL_SPEED_THRESHOLD
+    ? 1 + playerSpeed / KILL_SPEED_THRESHOLD
+    : 2 + (playerSpeed - KILL_SPEED_THRESHOLD) / (MAX_SPEED - KILL_SPEED_THRESHOLD);
+
   // Ground block effects (only when grounded)
+  if (grounded && nearOxy) {
+    oxygen = Math.min(100, oxygen + OXY_REFILL * refillMult * dt);
+    sndOxyPickupTimer -= dt;
+    if (sndOxyPickupTimer <= 0) { SFX.oxyPickup(); sndOxyPickupTimer = 0.3; }
+  }
+  if (grounded && nearFuel) {
+    fuel = Math.min(100, fuel + FUEL_REFILL * refillMult * dt);
+    sndFuelPickupTimer -= dt;
+    if (sndFuelPickupTimer <= 0) { SFX.fuelPickup(); sndFuelPickupTimer = 0.3; }
+  }
   if (block && grounded) {
     switch (block.type) {
       case BLOCK.OXYGEN:
-        oxygen = Math.min(100, oxygen + OXY_REFILL * dt);
-        sndOxyPickupTimer -= dt;
-        if (sndOxyPickupTimer <= 0) { SFX.oxyPickup(); sndOxyPickupTimer = 0.3; }
-        break;
       case BLOCK.FUEL:
-        fuel = Math.min(100, fuel + FUEL_REFILL * dt);
-        sndFuelPickupTimer -= dt;
-        if (sndFuelPickupTimer <= 0) { SFX.fuelPickup(); sndFuelPickupTimer = 0.3; }
-        break;
+        break; // handled above
       case BLOCK.KILL:
         die('kill');
         break;
@@ -408,11 +540,11 @@ function updatePlayer(dt) {
   // Fell off map
   if (playerY < -20) die('fall');
 
-  // Death conditions
-  if (oxygen <= 0) die('suffocate');
-  if (fuel <= 0 && playerSpeed <= 0) {
+  // Death conditions — stranded when out of resources and stopped
+  if ((noOxygen || !hasPropellant) && playerSpeed <= 0 && grounded) {
     stuckTimer += dt;
-    if (stuckTimer > 3) die('stranded');
+    var strandedDelay = !hasPropellant ? 3 : 1;
+    if (stuckTimer > strandedDelay) die('stranded');
   } else {
     stuckTimer = 0;
   }
@@ -423,7 +555,7 @@ function updateCamera() {
   camera.position.set(0, 5, playerZ + 10);
   camera.lookAt(new THREE.Vector3(0, 0, playerZ - 20));
 
-  shipMesh.position.set(playerX, playerY + 0.5, playerZ);
+  shipMesh.position.set(playerX, playerY + 0.35, playerZ);
   var tilt = -playerVX / 12 * 0.4;
   shipMesh.rotation.z = Math.max(-0.4, Math.min(0.4, tilt));
   var pitchTarget = 0;
@@ -438,23 +570,6 @@ function updateCamera() {
   headlight.position.set(playerX, playerY + 2, playerZ - 3);
   underglow.position.set(playerX, playerY + 0.2, playerZ);
 
-  if (debugCollider) {
-    debugCollider.position.set(playerX, playerY + PLAYER_H / 2, playerZ);
-    debugCollider.visible = debugMode;
-  }
-
-  // Debug row planes — show which rows the cube currently overlaps
-  if (debugRowPlanes.length) {
-    var dRows = playerRows();
-    for (var dp = 0; dp < debugRowPlanes.length; dp++) {
-      if (debugMode && dp < dRows.length) {
-        debugRowPlanes[dp].position.set(0, 0, rowToZ(dRows[dp]) + BLOCK_SIZE * 0.5);
-        debugRowPlanes[dp].visible = true;
-      } else {
-        debugRowPlanes[dp].visible = false;
-      }
-    }
-  }
 
   if (starField) starField.position.z = playerZ;
   if (planetMesh) {
@@ -470,29 +585,5 @@ function updateCamera() {
     engineMatRef.color.setRGB(r, g, 0);
   }
 
-  // Engine flames
-  var accelHeld = keys['ArrowUp'] || keys['KeyW'];
-  var brakeHeld = keys['ArrowDown'] || keys['KeyS'];
-  var flameL = shipMesh._flameL;
-  var flameR = shipMesh._flameR;
-  var fmat = shipMesh._flameMat;
-  if (accelHeld && fuel > 0 && !brakeHeld) {
-    flameL.visible = true;
-    flameR.visible = true;
-    var s = 1.0 + Math.random() * 0.3;
-    flameL.scale.set(1, 1, s);
-    flameR.scale.set(1, 1, s);
-    fmat.opacity = 0.8;
-    fmat.color.setHex(0xff4400);
-  } else if (playerSpeed > 0.5 && !brakeHeld) {
-    flameL.visible = true;
-    flameR.visible = true;
-    flameL.scale.set(0.4, 0.4, 0.3 + Math.random() * 0.1);
-    flameR.scale.set(0.4, 0.4, 0.3 + Math.random() * 0.1);
-    fmat.opacity = 0.5;
-    fmat.color.setHex(0xff6622);
-  } else {
-    flameL.visible = false;
-    flameR.visible = false;
-  }
+  // Flame is now handled by particle system in updateEngineTrail()
 }

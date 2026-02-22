@@ -16,6 +16,7 @@ var F = [N,N,N,N,N, N,N,N,N,N, N,N,N,N,N, N,N,N,N,N];
 
 LEVELS.push({
   name: "First Flight",
+  gridColors: [0x667788, 0x778899],
   rows: concat(
     // === Wide open start ===
     repeat(F, 12),

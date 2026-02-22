@@ -39,18 +39,41 @@ function showMenu() {
   buildMenu();
 }
 
+var menuTypeBuffer = '';
 window.addEventListener('keydown', function(e) {
   if (e.code === 'KeyR' && state !== 'menu') {
     cancelAnimationFrame(animId);
     clearAllRows();
-    clearExplosion();
+    clearAllParticles();
     startLevel(currentLevel);
   }
   if (e.code === 'Escape' && state !== 'menu') {
     cancelAnimationFrame(animId);
+    stopContinuousSounds();
     clearAllRows();
-    clearExplosion();
+    clearAllParticles();
+    clearShipDebris();
     showMenu();
+  }
+  // Menu shortcuts: number keys to start levels
+  if (state === 'menu') {
+    var num = parseInt(e.key);
+    if (num >= 1 && num <= LEVELS.length) {
+      startLevel(num - 1);
+    }
+    // Track typed keys for "deletealldata"
+    menuTypeBuffer += e.key.toLowerCase();
+    if (menuTypeBuffer.length > 20) menuTypeBuffer = menuTypeBuffer.slice(-20);
+    if (menuTypeBuffer.indexOf('deletealldata') !== -1) {
+      localStorage.removeItem('spaceRunnerCleared');
+      localStorage.removeItem('spaceRunnerScores');
+      clearedLevels = {};
+      bestScores = {};
+      menuTypeBuffer = '';
+      buildMenu();
+    }
+  } else {
+    menuTypeBuffer = '';
   }
 });
 
@@ -75,13 +98,15 @@ function startLevel(idx) {
   score = 0;
   screenFade = 0;
   started = false;
+  frozenKeys = null;
+  glideLockedIn = false;
 
+  if (animId) cancelAnimationFrame(animId);
   clearAllRows();
-  clearExplosion();
+  clearAllParticles();
+  clearShipDebris();
   resetSoundState();
   shipMesh.visible = true;
-  SFX.start();
-
   levelStartTime = performance.now();
   document.getElementById('menu').style.display = 'none';
   document.getElementById('game-canvas').style.display = 'block';
@@ -93,25 +118,24 @@ function startLevel(idx) {
 }
 
 var scoreDist = 0;
-var scoreTimePct = 0;
-var scoreWinMult = 1;
-var scoreFuelBonus = 0;
-var scoreOxyBonus = 0;
+var scoreTimeMult = 1;
+var scoreFuelMult = 1;
+var scoreOxyMult = 1;
 
 function calcAndSaveScore() {
   scoreDist = Math.floor(Math.abs(playerZ));
-  scoreTimePct = levelTimerMax > 0 ? levelTimer / levelTimerMax : 0;
   var won = (state === 'won' || state === 'winning');
   if (won) {
-    scoreFuelBonus = (fuel / 100) * 0.25;
-    scoreOxyBonus = (oxygen / 100) * 0.25;
-    scoreWinMult = 1 + scoreFuelBonus + scoreOxyBonus;
+    var timeRemainPct = levelTimerMax > 0 ? levelTimer / levelTimerMax : 0;
+    scoreTimeMult = 1 + timeRemainPct;
+    scoreFuelMult = 1 + (fuel / 100) * 0.05;
+    scoreOxyMult = 1 + (oxygen / 100) * 0.05;
   } else {
-    scoreFuelBonus = 0;
-    scoreOxyBonus = 0;
-    scoreWinMult = 1;
+    scoreTimeMult = 1;
+    scoreFuelMult = 1;
+    scoreOxyMult = 1;
   }
-  score = Math.floor(100 * scoreDist * scoreTimePct * scoreWinMult);
+  score = Math.floor(100 * scoreDist * scoreTimeMult * scoreFuelMult * scoreOxyMult);
   var key = '' + currentLevel;
   if (!bestScores[key] || score > bestScores[key]) {
     bestScores[key] = score;
@@ -132,37 +156,46 @@ function gameLoop() {
     updatePlayer(dt);
     updateSounds(dt);
     updateCamera();
+    updateShadow();
     updateChunks();
     updateEngineTrail(dt);
     updateSpeedLines(dt);
     updateSparks(dt);
     updateDust(dt);
   } else if (state === 'dead') {
+    deathSpeed = Math.max(0, deathSpeed - DECEL_RATE * 0.5 * dt);
+    playerZ -= deathSpeed * dt;
+    updateCamera();
+    updateShadow();
+    updateChunks();
     screenFade = Math.min(0.6, screenFade + dt * 0.4);
     updateExplosion(dt);
+    updateShipDebris(dt);
     updateSparks(dt);
     updateDust(dt);
-  } else if (state === 'winning') {
+  } else if (state === 'winning' || state === 'won') {
     screenFade = Math.min(0.5, screenFade + dt * 0.3);
-    winTimer -= dt;
+    if (state === 'winning') winTimer -= dt;
     playerSpeed = Math.min(MAX_SPEED, playerSpeed + ACCEL_RATE * dt);
     playerY += 3 * dt;
     playerZ -= playerSpeed * dt;
     grounded = false;
+    // Allow steering unless out of fuel/oxygen
+    if (fuel > 0 && oxygen > 0) {
+      var winLateral = 40;
+      if (keys['ArrowLeft'] || keys['KeyA']) playerVX -= winLateral * dt;
+      if (keys['ArrowRight'] || keys['KeyD']) playerVX += winLateral * dt;
+    }
+    playerVX *= Math.max(0, 1 - 2 * dt);
+    playerX += playerVX * dt;
     updateCamera();
     updateChunks();
     updateEngineTrail(dt);
     updateSpeedLines(dt);
-    if (winTimer <= 0) {
+    if (state === 'winning' && winTimer <= 0) {
       state = 'won';
       calcAndSaveScore();
     }
-  } else if (state === 'won') {
-    screenFade = Math.min(0.5, screenFade + dt * 0.3);
-    playerSpeed = Math.min(MAX_SPEED, playerSpeed + ACCEL_RATE * dt);
-    playerY += 3 * dt;
-    playerZ -= playerSpeed * dt;
-    updateCamera();
   }
 
   renderer.render(scene, camera);

@@ -152,7 +152,7 @@ function init3D() {
   scene.background = new THREE.Color(0x000011);
   scene.fog = new THREE.Fog(0x000011, 30, 80);
 
-  camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 800);
+  camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 800);
 
   renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('game-canvas'), antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -160,16 +160,25 @@ function init3D() {
   // Lights
   var ambient = new THREE.AmbientLight(0x223344, 0.5);
   scene.add(ambient);
-  var dirLight = new THREE.DirectionalLight(0xccddff, 0.7);
-  dirLight.position.set(5, 15, 5);
+  var dirLight = new THREE.DirectionalLight(0xccddff, 1.0);
+  dirLight.position.set(-8, 15, 10);
   scene.add(dirLight);
-  headlight = new THREE.PointLight(0x88bbff, 0.8, 25);
+  headlight = new THREE.PointLight(0x88bbff, 0.15, 15);
   scene.add(headlight);
-  underglow = new THREE.PointLight(0x0066ff, 0.3, 8);
+  underglow = new THREE.PointLight(0x0066ff, 0.1, 5);
   scene.add(underglow);
+  accelFlameLight = new THREE.SpotLight(0xff6622, 0, 12, Math.PI * 0.4, 0.5);
+  accelFlameLight.target = new THREE.Object3D();
+  scene.add(accelFlameLight);
+  scene.add(accelFlameLight.target);
+  cruiseFlameLight = new THREE.SpotLight(0x4466cc, 0, 8, Math.PI * 0.35, 0.6);
+  cruiseFlameLight.target = new THREE.Object3D();
+  scene.add(cruiseFlameLight);
+  scene.add(cruiseFlameLight.target);
 
   // Ship
   createShip();
+  createShadow();
 
   // Stars
   var starGeo = new THREE.BufferGeometry();
@@ -190,6 +199,7 @@ function init3D() {
   createPlanet();
 
   // Particles
+  initExplosion();
   initSpeedLines();
   initEngineTrail();
   initSparks();

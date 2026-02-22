@@ -1,5 +1,6 @@
 LEVELS.push({
   name: "Shattered Highway",
+  gridColors: [0x887766, 0x998877],
   rows: concat(
     // ===== WARMUP: gentle height intro (40r) =====
     repeat(F, 8),

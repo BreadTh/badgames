@@ -1,242 +1,3 @@
-// ---- DEBUG ----
-var debugOpen = false;
-window.addEventListener('keydown', function(e) {
-  if (e.code === 'KeyQ' && state !== 'menu') {
-    debugOpen = !debugOpen;
-    debugMode = debugOpen;
-  }
-});
-
-// Project a 3D world point to 2D screen coords
-function worldToScreen(wx, wy, wz) {
-  var v = new THREE.Vector3(wx, wy, wz);
-  v.project(camera);
-  return {
-    x: (v.x * 0.5 + 0.5) * hudCanvas.width,
-    y: (-v.y * 0.5 + 0.5) * hudCanvas.height
-  };
-}
-
-function drawDebug() {
-  if (!debugOpen) return;
-  var hw = PLAYER_W / 2;
-  var hd = PLAYER_D / 2;
-  var frontZ = playerZ - hd;
-  var backZ = playerZ + hd;
-
-  // Draw 8 collision corners (cube)
-  var corners = [
-    { wx: playerX - hw, wy: playerY,            wz: frontZ, label: 'FBL' },
-    { wx: playerX + hw, wy: playerY,            wz: frontZ, label: 'FBR' },
-    { wx: playerX - hw, wy: playerY + PLAYER_H, wz: frontZ, label: 'FTL' },
-    { wx: playerX + hw, wy: playerY + PLAYER_H, wz: frontZ, label: 'FTR' },
-    { wx: playerX - hw, wy: playerY,            wz: backZ,  label: 'BBL' },
-    { wx: playerX + hw, wy: playerY,            wz: backZ,  label: 'BBR' },
-    { wx: playerX - hw, wy: playerY + PLAYER_H, wz: backZ,  label: 'BTL' },
-    { wx: playerX + hw, wy: playerY + PLAYER_H, wz: backZ,  label: 'BTR' }
-  ];
-  for (var i = 0; i < corners.length; i++) {
-    var c = corners[i];
-    var sp = worldToScreen(c.wx, c.wy, c.wz);
-    hudCtx.fillStyle = '#0f0';
-    hudCtx.beginPath();
-    hudCtx.arc(sp.x, sp.y, 4, 0, Math.PI * 2);
-    hudCtx.fill();
-    hudCtx.font = '10px monospace';
-    hudCtx.fillText(c.label, sp.x + 6, sp.y + 3);
-  }
-
-  // Show where each bottom corner's row actually resolves (red dot at row center Z)
-  var botChecks = [
-    { x: playerX - hw, z: frontZ, row: zToRow(frontZ), label: 'FL' },
-    { x: playerX + hw, z: frontZ, row: zToRow(frontZ), label: 'FR' },
-    { x: playerX - hw, z: backZ,  row: zToRow(backZ),  label: 'BL' },
-    { x: playerX + hw, z: backZ,  row: zToRow(backZ),  label: 'BR' },
-  ];
-  for (var bc = 0; bc < 4; bc++) {
-    var rowCenterZ = rowToZ(botChecks[bc].row);
-    var sp4 = worldToScreen(botChecks[bc].x, playerY, rowCenterZ);
-    hudCtx.fillStyle = '#f00';
-    hudCtx.beginPath();
-    hudCtx.arc(sp4.x, sp4.y, 5, 0, Math.PI * 2);
-    hudCtx.fill();
-    hudCtx.font = '10px monospace';
-    hudCtx.fillText('r' + botChecks[bc].row, sp4.x + 8, sp4.y - 5);
-    // Line from green corner to red resolved position
-    var sp5 = worldToScreen(botChecks[bc].x, playerY, botChecks[bc].z);
-    hudCtx.strokeStyle = 'rgba(255, 0, 0, 0.3)';
-    hudCtx.lineWidth = 1;
-    hudCtx.beginPath();
-    hudCtx.moveTo(sp5.x, sp5.y);
-    hudCtx.lineTo(sp4.x, sp4.y);
-    hudCtx.stroke();
-  }
-
-  // Draw cube wireframe: front face, back face, connecting edges
-  hudCtx.strokeStyle = 'rgba(0, 255, 0, 0.5)';
-  hudCtx.lineWidth = 1;
-  // Front face: 0-1-3-2-0
-  var fOrder = [0, 1, 3, 2, 0];
-  hudCtx.beginPath();
-  for (var j = 0; j < fOrder.length; j++) {
-    var sp2 = worldToScreen(corners[fOrder[j]].wx, corners[fOrder[j]].wy, corners[fOrder[j]].wz);
-    if (j === 0) hudCtx.moveTo(sp2.x, sp2.y); else hudCtx.lineTo(sp2.x, sp2.y);
-  }
-  hudCtx.stroke();
-  // Back face: 4-5-7-6-4
-  var bOrder = [4, 5, 7, 6, 4];
-  hudCtx.beginPath();
-  for (var j2 = 0; j2 < bOrder.length; j2++) {
-    var sp3 = worldToScreen(corners[bOrder[j2]].wx, corners[bOrder[j2]].wy, corners[bOrder[j2]].wz);
-    if (j2 === 0) hudCtx.moveTo(sp3.x, sp3.y); else hudCtx.lineTo(sp3.x, sp3.y);
-  }
-  hudCtx.stroke();
-  // Connecting edges (front to back)
-  for (var k = 0; k < 4; k++) {
-    var a = worldToScreen(corners[k].wx, corners[k].wy, corners[k].wz);
-    var b = worldToScreen(corners[k + 4].wx, corners[k + 4].wy, corners[k + 4].wz);
-    hudCtx.beginPath();
-    hudCtx.moveTo(a.x, a.y);
-    hudCtx.lineTo(b.x, b.y);
-    hudCtx.stroke();
-  }
-  hudCtx.lineWidth = 1;
-
-  // Draw collider faces for all rows the player overlaps + the front row ahead
-  var pRows = playerRows();
-  var frontRow = pRows[pRows.length - 1] + 1; // row ahead of player's front edge
-
-  // Helper to draw a line between two 3D points
-  function debugLine(x1, y1, z1, x2, y2, z2, color) {
-    var a = worldToScreen(x1, y1, z1);
-    var b = worldToScreen(x2, y2, z2);
-    hudCtx.strokeStyle = color;
-    hudCtx.lineWidth = 2;
-    hudCtx.beginPath();
-    hudCtx.moveTo(a.x, a.y);
-    hudCtx.lineTo(b.x, b.y);
-    hudCtx.stroke();
-    hudCtx.fillStyle = color;
-    hudCtx.beginPath();
-    hudCtx.arc(a.x, a.y, 3, 0, Math.PI * 2);
-    hudCtx.fill();
-    hudCtx.beginPath();
-    hudCtx.arc(b.x, b.y, 3, 0, Math.PI * 2);
-    hudCtx.fill();
-  }
-
-  // Draw full collider boxes for each overlapping row
-  var lhw = LANE_WIDTH / 2;
-  for (var ri = 0; ri < pRows.length; ri++) {
-    var rowData = getRow(currentLevel, pRows[ri]);
-    if (!rowData) continue;
-    var rz = rowToZ(pRows[ri]);
-    var rzFront = rz - BLOCK_SIZE * 0.5;
-    var rzBack = rz + BLOCK_SIZE * 0.5;
-    for (var lane = 0; lane < LANES; lane++) {
-      var cell = rowData[lane];
-      if (!cell) continue;
-      var top = cell.h || 0;
-      var bot = top - BLOCK_SIZE * 0.5;
-      var lx = laneToX(lane);
-
-      // Floor (top surface) - CYAN
-      debugLine(lx - lhw, top, rzFront, lx + lhw, top, rzFront, 'rgba(0, 255, 255, 0.8)');
-      debugLine(lx - lhw, top, rzBack, lx + lhw, top, rzBack, 'rgba(0, 255, 255, 0.8)');
-      debugLine(lx - lhw, top, rzFront, lx - lhw, top, rzBack, 'rgba(0, 255, 255, 0.4)');
-      debugLine(lx + lhw, top, rzFront, lx + lhw, top, rzBack, 'rgba(0, 255, 255, 0.4)');
-
-      // Ceiling (bottom surface) - MAGENTA
-      debugLine(lx - lhw, bot, rzFront, lx + lhw, bot, rzFront, 'rgba(255, 0, 255, 0.8)');
-      debugLine(lx - lhw, bot, rzBack, lx + lhw, bot, rzBack, 'rgba(255, 0, 255, 0.8)');
-      debugLine(lx - lhw, bot, rzFront, lx - lhw, bot, rzBack, 'rgba(255, 0, 255, 0.4)');
-      debugLine(lx + lhw, bot, rzFront, lx + lhw, bot, rzBack, 'rgba(255, 0, 255, 0.4)');
-
-      // Left wall - RED
-      debugLine(lx - lhw, bot, rzFront, lx - lhw, top, rzFront, 'rgba(255, 80, 80, 0.8)');
-      debugLine(lx - lhw, bot, rzBack, lx - lhw, top, rzBack, 'rgba(255, 80, 80, 0.8)');
-      debugLine(lx - lhw, top, rzFront, lx - lhw, top, rzBack, 'rgba(255, 80, 80, 0.4)');
-      debugLine(lx - lhw, bot, rzFront, lx - lhw, bot, rzBack, 'rgba(255, 80, 80, 0.4)');
-
-      // Right wall - ORANGE
-      debugLine(lx + lhw, bot, rzFront, lx + lhw, top, rzFront, 'rgba(255, 165, 0, 0.8)');
-      debugLine(lx + lhw, bot, rzBack, lx + lhw, top, rzBack, 'rgba(255, 165, 0, 0.8)');
-      debugLine(lx + lhw, top, rzFront, lx + lhw, top, rzBack, 'rgba(255, 165, 0, 0.4)');
-      debugLine(lx + lhw, bot, rzFront, lx + lhw, bot, rzBack, 'rgba(255, 165, 0, 0.4)');
-    }
-  }
-
-  // Front row ahead: front face colliders only - YELLOW
-  var frontRowData = getRow(currentLevel, frontRow);
-  if (frontRowData) {
-    var nfz = rowToZ(frontRow) + BLOCK_SIZE * 0.5;
-    for (var lane2 = 0; lane2 < LANES; lane2++) {
-      var cell2 = frontRowData[lane2];
-      if (!cell2) continue;
-      var top2 = cell2.h || 0;
-      var bot2 = top2 - BLOCK_SIZE * 0.5;
-      var lx2 = laneToX(lane2);
-      debugLine(lx2 - lhw, bot2, nfz, lx2 + lhw, bot2, nfz, 'rgba(255, 255, 0, 0.7)');
-      debugLine(lx2 + lhw, bot2, nfz, lx2 + lhw, top2, nfz, 'rgba(255, 255, 0, 0.7)');
-      debugLine(lx2 + lhw, top2, nfz, lx2 - lhw, top2, nfz, 'rgba(255, 255, 0, 0.7)');
-      debugLine(lx2 - lhw, top2, nfz, lx2 - lhw, bot2, nfz, 'rgba(255, 255, 0, 0.7)');
-    }
-  }
-  hudCtx.lineWidth = 1;
-
-  // Debug text panel
-  var centerRow = zToRow(playerZ);
-  var frontBlock = getBlockAtX(frontRow, playerX);
-
-  var lines = [
-    'DEBUG (Q to close)',
-    '',
-    'pos: X=' + playerX.toFixed(2) + ' Y=' + playerY.toFixed(2) + ' Z=' + playerZ.toFixed(2),
-    'vel: VX=' + playerVX.toFixed(2) + ' VY=' + playerVY.toFixed(2) + ' spd=' + playerSpeed.toFixed(2),
-    'lane: ' + playerLane + ' rows: [' + pRows.join(',') + '] front: ' + frontRow,
-    'depth: frontZ=' + frontZ.toFixed(2) + ' backZ=' + backZ.toFixed(2),
-    'grounded: ' + grounded,
-    'fuel: ' + fuel.toFixed(1) + ' O2: ' + oxygen.toFixed(1),
-    '',
-    'block front: ' + (frontBlock ? 'type=' + frontBlock.type + ' h=' + (frontBlock.h || 0) : 'none'),
-  ];
-
-  // Show blocks in each overlapping row
-  for (var ri2 = 0; ri2 < pRows.length; ri2++) {
-    var cb = getBlockAtX(pRows[ri2], playerX);
-    lines.push('row ' + pRows[ri2] + ': ' + (cb ? 'type=' + cb.type + ' h=' + (cb.h || 0) : 'none'));
-  }
-
-  lines.push('');
-  lines.push('cube corners:');
-  for (var ci = 0; ci < corners.length; ci++) {
-    var lbl = corners[ci].label;
-    var inAny = false;
-    for (var ri3 = 0; ri3 < pRows.length; ri3++) {
-      if (pointInBlock(corners[ci].wx, corners[ci].wy, pRows[ri3])) { inAny = true; break; }
-    }
-    var inFront2 = pointInBlock(corners[ci].wx, corners[ci].wy, frontRow);
-    lines.push('  ' + lbl + ' (' + corners[ci].wx.toFixed(2) + ',' + corners[ci].wy.toFixed(2) + ',' + corners[ci].wz.toFixed(2) + ') cur:' + (inAny ? 'YES' : 'no') + ' fwd:' + (inFront2 ? 'YES' : 'no'));
-  }
-
-  // Draw panel background
-  var px = hudCanvas.width - 360;
-  var py = 10;
-  var lineH = 14;
-  var panelH = lines.length * lineH + 10;
-  hudCtx.fillStyle = 'rgba(0, 0, 0, 0.75)';
-  hudCtx.fillRect(px - 5, py - 5, 355, panelH);
-  hudCtx.strokeStyle = '#0a0';
-  hudCtx.strokeRect(px - 5, py - 5, 355, panelH);
-
-  // Draw text
-  hudCtx.fillStyle = '#0f0';
-  hudCtx.font = '12px monospace';
-  for (var li = 0; li < lines.length; li++) {
-    hudCtx.fillText(lines[li], px, py + li * lineH + 11);
-  }
-}
-
 // ---- HUD ----
 var hudCanvas, hudCtx;
 function initHud() {
@@ -346,7 +107,7 @@ function drawHud(dt) {
   var rx = hudCanvas.width - margin - bw;
   var ry = margin;
   var timerPct = levelTimerMax > 0 ? levelTimer / levelTimerMax : 0;
-  drawBar(rx, ry, bw, bh, timerPct, 'rgba(255, 200, 0, 0.85)', '#fc0', 'TIME', Math.ceil(levelTimer) + 's', true);
+  drawBar(rx, ry, bw, bh, timerPct, 'rgba(255, 200, 0, 0.85)', '#fc0', 'TIME', Math.ceil(levelTimer) + 's', false);
   ry += bh + 8;
   var totalDist = LEVELS[currentLevel] ? LEVELS[currentLevel].rows.length : 1;
   var traveled = Math.min(totalDist, Math.abs(playerZ));
@@ -376,41 +137,73 @@ function drawHud(dt) {
   // Death/win message (fades in with screenFade)
   var ta = Math.min(1, screenFade / 0.3); // text alpha: 0→1 as fade goes 0→0.3
   if (state === 'dead' && ta > 0) {
+    var cx = hudCanvas.width / 2;
+    var cy = hudCanvas.height / 2;
+    hudCtx.textAlign = 'center';
     hudCtx.fillStyle = 'rgba(255, 0, 0, ' + (ta * 0.9) + ')';
     hudCtx.font = 'bold 48px monospace';
-    hudCtx.textAlign = 'center';
-    hudCtx.fillText('GAME OVER', hudCanvas.width / 2, hudCanvas.height / 2);
-    hudCtx.fillStyle = 'rgba(255, 255, 255, ' + (ta * 0.5) + ')';
+    hudCtx.fillText('GAME OVER', cx, cy);
     hudCtx.font = '14px monospace';
-    hudCtx.fillText('100 x ' + scoreDist + ' dist x ' + Math.floor(scoreTimePct * 100) + '% time', hudCanvas.width / 2, hudCanvas.height / 2 + 32);
+    var running = 100 * scoreDist;
+    hudCtx.fillStyle = 'rgba(255, 255, 255, ' + (ta * 0.5) + ')';
+    hudCtx.fillText(scoreDist + ' dist x 100 = ' + running.toLocaleString(), cx, cy + 32);
     hudCtx.fillStyle = 'rgba(255, 200, 0, ' + (ta * 0.9) + ')';
     hudCtx.font = 'bold 20px monospace';
-    hudCtx.fillText('SCORE: ' + score, hudCanvas.width / 2, hudCanvas.height / 2 + 56);
+    hudCtx.fillText('SCORE: ' + score.toLocaleString(), cx, cy + 56);
     hudCtx.fillStyle = 'rgba(255, 255, 255, ' + (ta * 0.7) + ')';
     hudCtx.font = '16px monospace';
-    hudCtx.fillText('R to restart | ESC for menu', hudCanvas.width / 2, hudCanvas.height / 2 + 80);
+    hudCtx.fillText('R to restart | ESC for menu', cx, cy + 80);
     hudCtx.textAlign = 'left';
   } else if ((state === 'winning' || state === 'won') && ta > 0) {
+    var cx = hudCanvas.width / 2;
+    var cy = hudCanvas.height / 2;
+    hudCtx.textAlign = 'center';
     hudCtx.fillStyle = 'rgba(0, 255, 100, ' + (ta * 0.9) + ')';
     hudCtx.font = 'bold 48px monospace';
-    hudCtx.textAlign = 'center';
-    hudCtx.fillText('LEVEL CLEAR', hudCanvas.width / 2, hudCanvas.height / 2);
+    hudCtx.fillText('LEVEL CLEAR', cx, cy);
     if (state === 'won') {
-      hudCtx.fillStyle = 'rgba(255, 255, 255, ' + (ta * 0.5) + ')';
       hudCtx.font = '14px monospace';
-      hudCtx.fillText('100 x ' + scoreDist + ' dist x ' + Math.floor(scoreTimePct * 100) + '% time', hudCanvas.width / 2, hudCanvas.height / 2 + 32);
+      var ly = cy + 30;
+      var eqX = cx; // = sign centered here
+      var running = 100 * scoreDist;
+      hudCtx.fillStyle = 'rgba(255, 255, 255, ' + (ta * 0.5) + ')';
+      hudCtx.textAlign = 'right';
+      hudCtx.fillText(scoreDist + ' dist x 100 ', eqX, ly);
+      hudCtx.textAlign = 'left';
+      hudCtx.fillText('= ' + running.toLocaleString(), eqX, ly);
+      ly += 18;
+      running = Math.floor(running * scoreTimeMult);
+      hudCtx.fillStyle = 'rgba(255, 200, 0, ' + (ta * 0.5) + ')';
+      hudCtx.textAlign = 'right';
+      hudCtx.fillText('+' + Math.floor((scoreTimeMult - 1) * 100) + '% time ', eqX, ly);
+      hudCtx.textAlign = 'left';
+      hudCtx.fillText('= ' + running.toLocaleString(), eqX, ly);
+      ly += 18;
+      running = Math.floor(running * scoreFuelMult);
       hudCtx.fillStyle = 'rgba(0, 200, 255, ' + (ta * 0.5) + ')';
-      hudCtx.fillText('CLEAR BONUS: +' + Math.floor(scoreFuelBonus * 100) + '% fuel +' + Math.floor(scoreOxyBonus * 100) + '% O2 = x' + scoreWinMult.toFixed(2), hudCanvas.width / 2, hudCanvas.height / 2 + 50);
+      hudCtx.textAlign = 'right';
+      hudCtx.fillText('+' + Math.floor((scoreFuelMult - 1) * 100) + '% fuel ', eqX, ly);
+      hudCtx.textAlign = 'left';
+      hudCtx.fillText('= ' + running.toLocaleString(), eqX, ly);
+      ly += 18;
+      running = Math.floor(running * scoreOxyMult);
+      hudCtx.textAlign = 'right';
+      hudCtx.fillText('+' + Math.floor((scoreOxyMult - 1) * 100) + '% O2 ', eqX, ly);
+      hudCtx.textAlign = 'left';
+      hudCtx.fillText('= ' + running.toLocaleString(), eqX, ly);
+      ly += 24;
+      hudCtx.textAlign = 'center';
       hudCtx.fillStyle = 'rgba(255, 200, 0, ' + (ta * 0.9) + ')';
       hudCtx.font = 'bold 20px monospace';
       var best = bestScores['' + currentLevel];
-      var scoreText = 'SCORE: ' + score;
-      if (best && best > score) scoreText += '  BEST: ' + best;
+      var scoreText = 'SCORE: ' + score.toLocaleString();
+      if (best && best > score) scoreText += '  BEST: ' + best.toLocaleString();
       else scoreText += '  NEW BEST!';
-      hudCtx.fillText(scoreText, hudCanvas.width / 2, hudCanvas.height / 2 + 74);
+      hudCtx.fillText(scoreText, cx, ly);
+      ly += 24;
       hudCtx.fillStyle = 'rgba(255, 255, 255, ' + (ta * 0.7) + ')';
       hudCtx.font = '16px monospace';
-      hudCtx.fillText('R to restart | ESC for menu', hudCanvas.width / 2, hudCanvas.height / 2 + 98);
+      hudCtx.fillText('R to restart | ESC for menu', cx, ly);
     }
     hudCtx.textAlign = 'left';
   }
@@ -428,5 +221,4 @@ function drawHud(dt) {
     }
   }
 
-  drawDebug();
 }
