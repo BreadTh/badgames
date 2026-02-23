@@ -150,7 +150,7 @@ function createPlanet() {
 function init3D() {
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x000011);
-  scene.fog = new THREE.Fog(0x000011, 30, 80);
+  scene.fog = new THREE.Fog(0x000011, VIEW_DISTANCE - FOG_START, VIEW_DISTANCE);
 
   camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 800);
 

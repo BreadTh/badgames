@@ -1,10 +1,100 @@
 // ---- HUD ----
+var controlsHint = 'WASD/Arrows: move | SPACE: jump | Z: disable curve | P: pause | R: restart | ESC: menu';
 var hudCanvas, hudCtx;
 function initHud() {
   hudCanvas = document.getElementById('hud-canvas');
   hudCanvas.width = window.innerWidth;
   hudCanvas.height = window.innerHeight;
   hudCtx = hudCanvas.getContext('2d');
+}
+
+// ---- FPS HISTOGRAM ----
+var fpsShowHistogram = false;
+var fpsFrameTimes = []; // timestamps of recent frames (last 10s)
+
+function fpsRecordFrame() {
+  var now = performance.now();
+  fpsFrameTimes.push(now);
+  // trim older than 10s
+  var cutoff = now - 10000;
+  while (fpsFrameTimes.length > 0 && fpsFrameTimes[0] < cutoff) {
+    fpsFrameTimes.shift();
+  }
+}
+
+function drawFpsHistogram() {
+  if (!fpsShowHistogram || fpsFrameTimes.length < 2) return;
+
+  var now = performance.now();
+  var histW = 320, histH = 120;
+  var x0 = hudCanvas.width - histW - 20;
+  var y0 = hudCanvas.height - histH - 20;
+  var bins = 100; // each bin = 100ms
+  var counts = new Array(bins);
+  for (var i = 0; i < bins; i++) counts[i] = 0;
+
+  for (var i = 0; i < fpsFrameTimes.length; i++) {
+    var age = now - fpsFrameTimes[i]; // ms ago
+    var bin = Math.floor((10000 - age) / 100);
+    if (bin >= 0 && bin < bins) counts[bin]++;
+  }
+
+  // convert counts to FPS (count per 100ms * 10)
+  var fpsBins = new Array(bins);
+  var maxFps = 0;
+  for (var i = 0; i < bins; i++) {
+    fpsBins[i] = counts[i] * 10;
+    if (fpsBins[i] > maxFps) maxFps = fpsBins[i];
+  }
+  if (maxFps < 10) maxFps = 10;
+  // round up to nearest 10
+  maxFps = Math.ceil(maxFps / 10) * 10;
+
+  var barW = histW / bins;
+
+  // background
+  hudCtx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+  hudCtx.fillRect(x0, y0, histW, histH);
+  hudCtx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+  hudCtx.strokeRect(x0, y0, histW, histH);
+
+  // 60fps reference line
+  var y60 = y0 + histH - (60 / maxFps) * histH;
+  if (y60 > y0) {
+    hudCtx.strokeStyle = 'rgba(0, 255, 100, 0.3)';
+    hudCtx.beginPath();
+    hudCtx.moveTo(x0, y60);
+    hudCtx.lineTo(x0 + histW, y60);
+    hudCtx.stroke();
+  }
+
+  // bars
+  for (var i = 0; i < bins; i++) {
+    var fps = fpsBins[i];
+    var barH = (fps / maxFps) * histH;
+    var bx = x0 + i * barW;
+    var by = y0 + histH - barH;
+    // color: green >= 55, yellow 30-55, red < 30
+    if (fps >= 55) hudCtx.fillStyle = 'rgba(0, 220, 100, 0.7)';
+    else if (fps >= 30) hudCtx.fillStyle = 'rgba(255, 200, 0, 0.7)';
+    else hudCtx.fillStyle = 'rgba(255, 50, 50, 0.7)';
+    hudCtx.fillRect(bx, by, barW - 0.5, barH);
+  }
+
+  // labels
+  hudCtx.fillStyle = '#fff';
+  hudCtx.font = '11px monospace';
+  hudCtx.textAlign = 'left';
+  // current fps (last bin)
+  var curFps = fpsBins[bins - 1];
+  hudCtx.fillText('FPS: ' + curFps, x0 + 4, y0 + 12);
+  hudCtx.fillText(maxFps, x0 + 4, y0 + 24);
+  // time labels
+  hudCtx.textAlign = 'right';
+  hudCtx.fillStyle = 'rgba(255,255,255,0.5)';
+  hudCtx.fillText('-10s', x0 + 30, y0 + histH - 3);
+  hudCtx.fillText('now', x0 + histW - 2, y0 + histH - 3);
+  hudCtx.textAlign = 'left';
 }
 
 function drawBar(x, y, bw, bh, pct, color, strokeColor, label, value, warn) {
@@ -57,6 +147,7 @@ function drawBar(x, y, bw, bh, pct, color, strokeColor, label, value, warn) {
 }
 
 function drawHud(dt) {
+  fpsRecordFrame();
   hudCtx.clearRect(0, 0, hudCanvas.width, hudCanvas.height);
   var bw = 200, bh = 20, margin = 20;
   var x = margin, y = margin;
@@ -216,9 +307,44 @@ function drawHud(dt) {
       hudCtx.fillStyle = 'rgba(255, 255, 255, ' + hintAlpha + ')';
       hudCtx.font = '14px monospace';
       hudCtx.textAlign = 'center';
-      hudCtx.fillText('WASD/Arrows: move | SPACE: jump | R: restart | ESC: menu', hudCanvas.width / 2, 30);
+      hudCtx.fillText(controlsHint, hudCanvas.width / 2, 30);
       hudCtx.textAlign = 'left';
     }
   }
 
+  // Debug hint (permanent bottom bar)
+  if (debugMode) {
+    var dbgY = hudCanvas.height - 12;
+    hudCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    hudCtx.fillRect(0, dbgY - 14, hudCanvas.width, 20);
+    hudCtx.fillStyle = '#ff0';
+    hudCtx.font = '12px monospace';
+    hudCtx.textAlign = 'center';
+    var hint = '1:kill  2:invincible' + (debugInvincible ? ' [ON]' : '') +
+      '  3:revive  4:max spd  5:warp back  6:fuel  7:oxy  8:no fuel  9:no oxy  0:stop';
+    hudCtx.fillText(hint, hudCanvas.width / 2, dbgY);
+    hudCtx.textAlign = 'left';
+  }
+
+  drawFpsHistogram();
+}
+
+function drawPauseScreen() {
+  hudCtx.clearRect(0, 0, hudCanvas.width, hudCanvas.height);
+  var cx = hudCanvas.width / 2;
+  var cy = hudCanvas.height / 2;
+
+  // Dim overlay
+  hudCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+  hudCtx.fillRect(0, 0, hudCanvas.width, hudCanvas.height);
+
+  hudCtx.textAlign = 'center';
+  hudCtx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+  hudCtx.font = 'bold 48px monospace';
+  hudCtx.fillText('PAUSED', cx, cy);
+
+  hudCtx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+  hudCtx.font = '16px monospace';
+  hudCtx.fillText(controlsHint, cx, cy + 40);
+  hudCtx.textAlign = 'left';
 }

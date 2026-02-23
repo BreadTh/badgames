@@ -41,6 +41,15 @@ function showMenu() {
 
 var menuTypeBuffer = '';
 window.addEventListener('keydown', function(e) {
+  if (e.code === 'KeyQ' && !e.repeat) {
+    fpsShowHistogram = !fpsShowHistogram;
+  }
+  if (e.code === 'KeyZ' && !e.repeat) {
+    pathCurveUniform.value = pathCurveUniform.value ? 0 : PATH_CURVE;
+  }
+  if (e.code === 'KeyP' && !e.repeat && state === 'playing') {
+    paused = !paused;
+  }
   if (e.code === 'KeyR' && state !== 'menu') {
     cancelAnimationFrame(animId);
     clearAllRows();
@@ -55,10 +64,46 @@ window.addEventListener('keydown', function(e) {
     clearShipDebris();
     showMenu();
   }
+  // "debugme" detection — works in any state
+  debugTypeBuffer += e.key.toLowerCase();
+  if (debugTypeBuffer.length > 20) debugTypeBuffer = debugTypeBuffer.slice(-20);
+  if (debugTypeBuffer.indexOf('debugme') !== -1) {
+    debugMode = !debugMode;
+    if (!debugMode) debugInvincible = false;
+    debugTypeBuffer = '';
+  }
+  // Debug keys (only when debug is on and in-game)
+  if (debugMode && state !== 'menu' && !e.repeat) {
+    if (e.code === 'Digit1' && alive) { die('kill'); }
+    if (e.code === 'Digit2') { debugInvincible = !debugInvincible; }
+    if (e.code === 'Digit3' && !alive) {
+      alive = true;
+      state = 'playing';
+      screenFade = 0;
+      playerX = safeX;
+      playerY = safeY + 0.1;
+      playerZ = safeZ;
+      playerVY = 0;
+      playerVX = 0;
+      grounded = false;
+      padSustain = false;
+      glideLockedIn = false;
+      frozenKeys = null;
+      shipMesh.visible = true;
+      clearShipDebris();
+    }
+    if (e.code === 'Digit4') { playerSpeed = MAX_SPEED; }
+    if (e.code === 'Digit5') { playerZ += 10; }
+    if (e.code === 'Digit6') { fuel = 100; }
+    if (e.code === 'Digit7') { oxygen = 100; }
+    if (e.code === 'Digit8') { fuel = 0; }
+    if (e.code === 'Digit9') { oxygen = 0; }
+    if (e.code === 'Digit0') { playerSpeed = 0; }
+  }
   // Menu shortcuts: number keys to start levels
   if (state === 'menu') {
     var num = parseInt(e.key);
-    if (num >= 1 && num <= LEVELS.length) {
+    if (num >= 1 && num <= LEVELS.length && !debugMode) {
       startLevel(num - 1);
     }
     // Track typed keys for "deletealldata"
@@ -81,6 +126,7 @@ window.addEventListener('keydown', function(e) {
 function startLevel(idx) {
   currentLevel = idx;
   state = 'playing';
+  paused = false;
   alive = true;
   playerLane = Math.floor(LANES / 2);
   playerX = 0;
@@ -103,6 +149,7 @@ function startLevel(idx) {
 
   if (animId) cancelAnimationFrame(animId);
   clearAllRows();
+  initMergedChunks(idx);
   clearAllParticles();
   clearShipDebris();
   resetSoundState();
@@ -145,11 +192,14 @@ function calcAndSaveScore() {
 
 // ---- GAME LOOP ----
 var animId;
+var paused = false;
 function gameLoop() {
   if (state === 'menu') return;
 
   animId = requestAnimationFrame(gameLoop);
   var dt = Math.min(clock.getDelta(), 0.05);
+
+  if (paused) { renderer.render(scene, camera); drawPauseScreen(); return; }
 
   if (state === 'playing') {
     if (started) levelTimer = Math.max(0, levelTimer - dt);

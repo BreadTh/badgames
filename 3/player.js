@@ -30,6 +30,7 @@ function pointInBlock(x, y, rowIdx) {
 var deathSpeed = 0;
 var frozenKeys = null;
 var glideLockedIn = false;
+var padSustain = false;
 function die(reason) {
   if (!alive) return;
   alive = false;
@@ -151,7 +152,8 @@ function updatePlayer(dt) {
   var speedPctA = playerSpeed / MAX_SPEED;
   var airMult = sustainingX ? AIR_CONTROL : AIR_CONTROL_FREE;
   // Slower = more air control (2x at standstill, 1x at max speed)
-  var lateralAccel = grounded ? 40 : 40 * airMult * (2 - speedPctA);
+  var steerScale = 0.5 + 0.5 * Math.pow(speedPctA, 0.8);
+  var lateralAccel = grounded ? 40 * steerScale : 40 * steerScale * airMult * (2 - speedPctA);
   if (!hasPropellant) lateralAccel *= 0.25;
   var lateralFriction = grounded ? 8 : 0.5;
   var steering = false;
@@ -162,7 +164,7 @@ function updatePlayer(dt) {
   if (grounded && !(inp['ArrowLeft'] || inp['KeyA'] || inp['ArrowRight'] || inp['KeyD'])) {
     playerVX *= Math.max(0, 1 - lateralFriction * dt);
   }
-  var maxLateral = 12;
+  var maxLateral = 12 * steerScale;
   playerVX = Math.max(-maxLateral, Math.min(maxLateral, playerVX));
 
   // Coyote time (once per frame)
@@ -187,10 +189,10 @@ function updatePlayer(dt) {
   // ---- SUB-STEPPED MOVEMENT + COLLISION ----
   // Prevents tunneling through blocks at high speed / low framerate.
   // Each axis moves in small steps; collision cancels remaining movement on that axis.
-  var MAX_STEP = 0.5;
+  var MAX_STEP = BLOCK_SIZE * 0.5; // half the thinnest obstacle — prevents tunneling
   var moveEstZ = playerSpeed * dt;
   var moveEstX = Math.abs(playerVX * dt);
-  var moveEstY = Math.abs(playerVY * dt);
+  var moveEstY = Math.abs(playerVY * dt) + Math.abs(GRAVITY) * dt * dt * 0.5;
   var maxMove = Math.max(moveEstZ, moveEstX, moveEstY);
   var subSteps = maxMove > MAX_STEP ? Math.ceil(maxMove / MAX_STEP) : 1;
   var subDt = dt / subSteps;
@@ -225,12 +227,13 @@ function updatePlayer(dt) {
       else if (!nearGround && playerVY <= 0) glideLockedIn = true;
       var gliding = inp['Space'] && playerVY <= 0 && fuel > 0 && (!nearGround || glideLockedIn);
       var sustaining = inp['Space'] && playerVY > 0 && hasPropellant;
+      if (padSustain && (playerVY <= 0 || fuel <= 0)) padSustain = false;
       if (gliding) {
         fuel = Math.max(0, fuel - FUEL_GLIDE_COST * subDt);
       } else if (sustaining) {
         spendFuel(FUEL_AIR_COST * subDt);
       }
-      var grav = sustaining ? GRAVITY * HOLD_GRAVITY : gliding ? GRAVITY * GLIDE_GRAVITY : GRAVITY;
+      var grav = (sustaining || padSustain) ? GRAVITY * HOLD_GRAVITY : gliding ? GRAVITY * GLIDE_GRAVITY : GRAVITY;
       playerVY += grav * subDt;
       playerY += playerVY * subDt;
 
@@ -258,9 +261,11 @@ function updatePlayer(dt) {
           }
         }
         if (landSurface !== null) {
-          if (landBlock.type === BLOCK.KILL) {
+          if (landBlock.type === BLOCK.KILL && !debugInvincible) {
             die('kill'); return;
           }
+          airDrainFuel = false; airDrainOxy = false;
+          var landIsDrain = landBlock.type === BLOCK.DRAIN_FUEL || landBlock.type === BLOCK.DRAIN_OXY;
           playerY = landSurface;
           spawnSparks(playerX, landSurface, playerZ, Math.min(1, Math.abs(playerVY) / 15));
           SFX.bounce();
@@ -280,14 +285,23 @@ function updatePlayer(dt) {
             spawnSparks(playerX, landSurface + 0.1, playerZ, 0.6);
             spawnJumpSparks(playerX, landSurface, playerZ);
             SFX.jump();
+            if (landIsDrain) {
+              if (landBlock.type === BLOCK.DRAIN_FUEL) airDrainFuel = true;
+              else airDrainOxy = true;
+            }
           } else {
             var bounceV = -playerVY * BOUNCE_FACTOR;
             if (bounceV > 1.5) {
               playerVY = bounceV;
               coyoteTimer = COYOTE_TIME;
+              if (landIsDrain) {
+                if (landBlock.type === BLOCK.DRAIN_FUEL) airDrainFuel = true;
+                else airDrainOxy = true;
+              }
             } else {
               playerVY = 0;
               grounded = true;
+              padSustain = false;
             }
           }
         }
@@ -305,6 +319,7 @@ function updatePlayer(dt) {
         ];
         var lowestBot = Infinity;
         var bonked = false;
+        var bonkedKill = false;
         for (var bci = 0; bci < 4; bci++) {
           var col = getColumnAtX(topCorners[bci].r, topCorners[bci].x);
           for (var bbi = 0; bbi < col.length; bbi++) {
@@ -312,11 +327,14 @@ function updatePlayer(dt) {
             var top = blockTop(col[bbi]);
             if (topY >= bot && topY <= top) {
               bonked = true;
+              if (col[bbi].type === BLOCK.KILL) bonkedKill = true;
               if (bot < lowestBot) lowestBot = bot;
             }
           }
         }
         if (bonked) {
+          if (bonkedKill && !debugInvincible) { die('kill'); return; }
+          airDrainFuel = false; airDrainOxy = false;
           if (!sndBonkWas) SFX.bonk();
           sndBonkWas = true;
           playerSpeed *= 0.9;
@@ -349,9 +367,10 @@ function updatePlayer(dt) {
             }
           }
           if (blocked) {
-            if (playerSpeed > KILL_SPEED_THRESHOLD) {
+            if (playerSpeed > KILL_SPEED_THRESHOLD && !debugInvincible) {
               die('crash'); return;
             }
+            airDrainFuel = false; airDrainOxy = false;
             if (playerSpeed > 2) SFX.collide();
             playerZ = Math.min(prevZ, wallBackFace + 0.1 + PLAYER_D / 2);
             playerSpeed = 0;
@@ -372,23 +391,30 @@ function updatePlayer(dt) {
     if (!xBlocked) {
       var sRows = playerRows();
       var hitLeft = false, hitRight = false;
+      var killLeft = false, killRight = false;
       for (var ssi = 0; ssi < sRows.length; ssi++) {
         if (!hitLeft) {
-          if (pointInBlock(playerX - hw, playerY, sRows[ssi]) ||
-              pointInBlock(playerX - hw, playerY + PLAYER_H, sRows[ssi])) {
+          var lbBot = pointInBlock(playerX - hw, playerY, sRows[ssi]);
+          var lbTop = pointInBlock(playerX - hw, playerY + PLAYER_H, sRows[ssi]);
+          if (lbBot || lbTop) {
             hitLeft = true;
+            if ((lbBot && lbBot.type === BLOCK.KILL) || (lbTop && lbTop.type === BLOCK.KILL)) killLeft = true;
           }
         }
         if (!hitRight) {
-          if (pointInBlock(playerX + hw, playerY, sRows[ssi]) ||
-              pointInBlock(playerX + hw, playerY + PLAYER_H, sRows[ssi])) {
+          var rbBot = pointInBlock(playerX + hw, playerY, sRows[ssi]);
+          var rbTop = pointInBlock(playerX + hw, playerY + PLAYER_H, sRows[ssi]);
+          if (rbBot || rbTop) {
             hitRight = true;
+            if ((rbBot && rbBot.type === BLOCK.KILL) || (rbTop && rbTop.type === BLOCK.KILL)) killRight = true;
           }
         }
       }
       var WALL_BOUNCE_THRESHOLD = 4;
       var WALL_GRIND_DECEL = 24;
       if (hitLeft && playerVX <= 0) {
+        if (killLeft && !debugInvincible) { die('kill'); return; }
+        airDrainFuel = false; airDrainOxy = false;
         if (!sndHitLeftWas) SFX.wallTap();
         sndHitLeftWas = true;
         playerX = prevX;
@@ -404,6 +430,8 @@ function updatePlayer(dt) {
         sndHitLeftWas = false;
       }
       if (hitRight && playerVX >= 0) {
+        if (killRight && !debugInvincible) { die('kill'); return; }
+        airDrainFuel = false; airDrainOxy = false;
         if (!sndHitRightWas) SFX.wallTap();
         sndHitRightWas = true;
         playerX = prevX;
@@ -484,31 +512,47 @@ function updatePlayer(dt) {
     sndFuelPickupTimer -= dt;
     if (sndFuelPickupTimer <= 0) { SFX.fuelPickup(); sndFuelPickupTimer = 0.3; }
   }
+  if (grounded && (!block || (block.type !== BLOCK.DRAIN_FUEL && block.type !== BLOCK.DRAIN_OXY))) {
+    airDrainFuel = false; airDrainOxy = false;
+  }
   if (block && grounded) {
     switch (block.type) {
       case BLOCK.OXYGEN:
       case BLOCK.FUEL:
         break; // handled above
       case BLOCK.KILL:
-        die('kill');
+        if (!debugInvincible) die('kill');
         break;
       case BLOCK.JUMP:
-        playerVY = JUMP_FORCE;
-        grounded = false;
-        SFX.jumpPad();
+        if (fuel > 0) {
+          playerVY = JUMP_FORCE;
+          grounded = false;
+          padSustain = true;
+          SFX.jumpPad();
+        }
         break;
       case BLOCK.DRAIN_FUEL:
         fuel = Math.max(0, fuel - FUEL_DRAIN_RATE * dt);
+        airDrainFuel = true;
         sndDrainTimer -= dt;
         if (sndDrainTimer <= 0) { SFX.drain(); sndDrainTimer = 0.4; }
         break;
       case BLOCK.DRAIN_OXY:
         oxygen = Math.max(0, oxygen - OXY_DRAIN_BLOCK_RATE * dt);
+        airDrainOxy = true;
         sndDrainTimer -= dt;
         if (sndDrainTimer <= 0) { SFX.drain(); sndDrainTimer = 0.4; }
         break;
     }
 
+  }
+
+  // Airborne drain (persists from drain block until next contact)
+  if (!grounded && (airDrainFuel || airDrainOxy)) {
+    if (airDrainFuel) fuel = Math.max(0, fuel - FUEL_DRAIN_RATE * dt);
+    if (airDrainOxy) oxygen = Math.max(0, oxygen - OXY_DRAIN_BLOCK_RATE * dt);
+    sndDrainTimer -= dt;
+    if (sndDrainTimer <= 0) { SFX.drain(); sndDrainTimer = 0.4; }
   }
 
   // Fall if no ground below — check all 4 bottom corners
@@ -534,14 +578,18 @@ function updatePlayer(dt) {
       if (!sndFallingWas) { SFX.falling(); sndFallingWas = true; }
     } else {
       sndFallingWas = false;
+      // Track safe position for debug revive (not on kill/drain blocks)
+      if (!block || (block.type !== BLOCK.KILL && block.type !== BLOCK.DRAIN_FUEL && block.type !== BLOCK.DRAIN_OXY)) {
+        safeX = playerX; safeY = playerY; safeZ = playerZ;
+      }
     }
   }
 
   // Fell off map
-  if (playerY < -20) die('fall');
+  if (playerY < -20 && !debugInvincible) die('fall');
 
   // Death conditions — stranded when out of resources and stopped
-  if ((noOxygen || !hasPropellant) && playerSpeed <= 0 && grounded) {
+  if ((noOxygen || !hasPropellant) && playerSpeed <= 0 && grounded && !debugInvincible) {
     stuckTimer += dt;
     var strandedDelay = !hasPropellant ? 3 : 1;
     if (stuckTimer > strandedDelay) die('stranded');

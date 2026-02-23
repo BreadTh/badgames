@@ -39,7 +39,10 @@ var AIR_CONTROL_FREE = 0.45; // air control when not sustaining
 var AIR_SPEED_CONTROL = 0.25; // fraction of accel/decel rate while airborne
 var BOUNCE_FACTOR = 0.45;
 var COYOTE_TIME = 0.12; // seconds after leaving ground where jump still works
-var VIEW_DISTANCE = 80; // how many rows ahead to show
+var VIEW_DISTANCE = 160; // how many rows ahead to show
+var FOG_START = 60; // distance where fog begins (doubled from 30)
+var PATH_CURVE = 0.00000009; // visual upward curve of distant track (quartic)
+var CURVE_START = 1/5; // fraction of view distance before curve begins
 var BASE_SPEED = 5;
 var MAX_SPEED = 40;
 var ACCEL_RATE = 16;
@@ -53,8 +56,8 @@ var FUEL_EMPTY_DECEL = 3; // speed loss per second with no fuel
 var OXY_DRAIN = 2; // per second always
 var OXY_REFILL = 22.5; // per second on oxygen block (75% of original 30)
 var FUEL_REFILL = 25;
-var FUEL_DRAIN_RATE = 15;
-var OXY_DRAIN_BLOCK_RATE = 15;
+var FUEL_DRAIN_RATE = 60;
+var OXY_DRAIN_BLOCK_RATE = 60;
 var KILL_SPEED_THRESHOLD = 28; // head-on collision kill speed
 var PLAYER_H = 0.475;
 var PLAYER_W = 0.6; // collision width
@@ -69,8 +72,13 @@ var headlight, underglow, accelFlameLight, cruiseFlameLight;
 var starField;
 var engineMatRef;
 
-// Chunks: map of rowIndex -> array of meshes
-var loadedRows = {};
+// Merged geometry system
+var loadedRowData = {};  // rowIdx -> array of {lane, h, type, mask, bucket, x, y, z}
+var mergedMaterials = {}; // bucket key -> MeshPhongMaterial
+var mergedMeshes = {};    // bucket key -> THREE.Mesh
+var mergedDirty = false;
+var curveStart = VIEW_DISTANCE * CURVE_START;
+var pathCurveUniform = { value: PATH_CURVE };
 
 // Input
 var keys = {};
@@ -82,6 +90,16 @@ window.addEventListener('blur', function() { keys = {}; });
 var deathTimer = 0;
 var winTimer = 0;
 var stuckTimer = 0;
+
+// Debug
+var debugMode = false;
+var debugInvincible = false;
+var debugTypeBuffer = '';
+var safeX = 0;
+var safeY = 0;
+var safeZ = 0;
+var airDrainFuel = false;
+var airDrainOxy = false;
 
 // ---- HELPERS ----
 var LANE_CENTER = (LANES - 1) / 2; // 4.5 for 10 lanes
