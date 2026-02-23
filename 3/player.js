@@ -111,7 +111,8 @@ function updatePlayer(dt) {
       if (hasPropellant) {
         if (!started) started = true;
         var rate = wallEscape ? ACCEL_RATE * 0.6 : ACCEL_RATE;
-        playerSpeed = Math.min(MAX_SPEED, playerSpeed + rate * dt);
+        var boostMax = MAX_SPEED * (1 + BOOST_SPEED_PCT);
+        playerSpeed = Math.min(boostMax, playerSpeed + rate * dt);
         accel = true;
       }
     }
@@ -121,7 +122,8 @@ function updatePlayer(dt) {
     if (!grounded && !wallEscape) {
       var airSpdMult = AIR_SPEED_CONTROL * (2 - playerSpeed / MAX_SPEED);
       if ((inp['ArrowUp'] || inp['KeyW']) && hasPropellant) {
-        playerSpeed = Math.min(MAX_SPEED, playerSpeed + ACCEL_RATE * airSpdMult * dt);
+        var boostMaxAir = MAX_SPEED * (1 + BOOST_SPEED_PCT);
+        playerSpeed = Math.min(boostMaxAir, playerSpeed + ACCEL_RATE * airSpdMult * dt);
         accel = true;
       }
       if (inp['ArrowDown'] || inp['KeyS']) {
@@ -130,11 +132,20 @@ function updatePlayer(dt) {
     }
   }
 
+  // Boost decay: bleed speed back to MAX_SPEED when not accelerating
+  if (!accel && playerSpeed > MAX_SPEED) {
+    playerSpeed = Math.max(MAX_SPEED, playerSpeed - BOOST_DECAY_RATE * dt);
+    if (playerSpeed < MAX_SPEED * 1.01) playerSpeed = MAX_SPEED;
+  }
+
   // Fuel (or oxygen at 3x when out of fuel)
   if (accel && playerSpeed < MAX_SPEED) {
     spendFuel(FUEL_ACCEL_COST * playerSpeed * dt);
   } else if (accel && playerSpeed >= MAX_SPEED) {
-    spendFuel(FUEL_ACCEL_COST * 0.5 * playerSpeed * dt);
+    spendFuel(FUEL_ACCEL_COST * BOOST_FUEL_MULT * playerSpeed * dt);
+  } else if (!accel && playerSpeed > MAX_SPEED) {
+    // Decaying from boost — still burns boost fuel
+    spendFuel(FUEL_ACCEL_COST * BOOST_FUEL_MULT * playerSpeed * dt);
   } else if (playerSpeed > 0) {
     spendFuel(FUEL_CRUISE_COST * playerSpeed * dt);
   }

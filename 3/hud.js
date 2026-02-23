@@ -236,7 +236,9 @@ function drawHud(dt) {
     hudCtx.fillText(scoreDist + ' dist x 100 = ' + running.toLocaleString(), cx, cy + 32);
     hudCtx.fillStyle = 'rgba(255, 200, 0, ' + (ta * 0.9) + ')';
     hudCtx.font = 'bold 20px monospace';
-    hudCtx.fillText('SCORE: ' + score.toLocaleString(), cx, cy + 56);
+    var deathScoreText = 'SCORE: ' + score.toLocaleString();
+    if (isNewBest) deathScoreText += '  NEW BEST!';
+    hudCtx.fillText(deathScoreText, cx, cy + 56);
     hudCtx.fillStyle = 'rgba(255, 255, 255, ' + (ta * 0.7) + ')';
     hudCtx.font = '16px monospace';
     hudCtx.fillText('R to restart | ESC for menu', cx, cy + 80);
@@ -283,10 +285,9 @@ function drawHud(dt) {
       hudCtx.textAlign = 'center';
       hudCtx.fillStyle = 'rgba(255, 200, 0, ' + (ta * 0.9) + ')';
       hudCtx.font = 'bold 20px monospace';
-      var best = bestScores['' + currentLevel];
       var scoreText = 'SCORE: ' + score.toLocaleString();
-      if (best && best > score) scoreText += '  BEST: ' + best.toLocaleString();
-      else scoreText += '  NEW BEST!';
+      if (isNewBest) scoreText += '  NEW BEST!';
+      else { var best = bestScores['' + currentLevel]; if (best) scoreText += '  BEST: ' + best.toLocaleString(); }
       hudCtx.fillText(scoreText, cx, ly);
       ly += 24;
       hudCtx.fillStyle = 'rgba(255, 255, 255, ' + (ta * 0.7) + ')';

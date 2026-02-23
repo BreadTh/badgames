@@ -189,7 +189,8 @@ function calcAndSaveScore() {
   }
   score = Math.floor(100 * scoreDist * scoreTimeMult * scoreFuelMult * scoreOxyMult);
   var key = '' + currentLevel;
-  if (!bestScores[key] || score > bestScores[key]) {
+  isNewBest = !bestScores[key] || score > bestScores[key];
+  if (isNewBest) {
     bestScores[key] = score;
     localStorage.setItem('spaceRunnerScores', JSON.stringify(bestScores));
   }

@@ -3,6 +3,7 @@ var state = 'menu'; // menu | playing | dead | winning | won
 var currentLevel = 0;
 var clearedLevels = JSON.parse(localStorage.getItem('spaceRunnerCleared') || '{}');
 var score = 0;
+var isNewBest = false;
 var levelTimer = 0;
 var levelTimerMax = 0;
 var started = false; // true once player first accelerates
@@ -51,6 +52,9 @@ var DEATH_DITHER_X = 0;  // weight of world X in sweep direction
 var DEATH_DITHER_Z = -1; // weight of distance-ahead in sweep direction (negative = far end first)
 var BASE_SPEED = 5;
 var MAX_SPEED = 40;
+var BOOST_SPEED_PCT = 0.25; // extra speed while holding accel at max
+var BOOST_FUEL_MULT = 1.0; // fuel cost multiplier while boosting (vs FUEL_ACCEL_COST)
+var BOOST_DECAY_RATE = 20; // speed/sec bleed back to MAX_SPEED after releasing accel
 var ACCEL_RATE = 16;
 var DECEL_RATE = 36;
 var FUEL_ACCEL_COST = 0.3; // per second while accelerating (below max speed)
