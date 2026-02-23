@@ -45,7 +45,7 @@ window.addEventListener('keydown', function(e) {
     fpsShowHistogram = !fpsShowHistogram;
   }
   if (e.code === 'KeyZ' && !e.repeat) {
-    pathCurveUniform.value = pathCurveUniform.value ? 0 : PATH_CURVE;
+    curveTarget = curveTarget ? 0 : PATH_CURVE;
   }
   if (e.code === 'KeyP' && !e.repeat && state === 'playing') {
     paused = !paused;
@@ -80,6 +80,8 @@ window.addEventListener('keydown', function(e) {
       alive = true;
       state = 'playing';
       screenFade = 0;
+      deathDitherUniform.value = 0;
+      deathTimer = 0;
       playerX = safeX;
       playerY = safeY + 0.1;
       playerZ = safeZ;
@@ -89,6 +91,7 @@ window.addEventListener('keydown', function(e) {
       padSustain = false;
       glideLockedIn = false;
       frozenKeys = null;
+      if (deathReason === 'crash') playerSpeed = 0;
       shipMesh.visible = true;
       clearShipDebris();
     }
@@ -143,6 +146,8 @@ function startLevel(idx) {
   levelTimer = levelTimerMax;
   score = 0;
   screenFade = 0;
+  deathDitherUniform.value = 0;
+  deathTimer = 0;
   started = false;
   frozenKeys = null;
   glideLockedIn = false;
@@ -199,6 +204,14 @@ function gameLoop() {
   animId = requestAnimationFrame(gameLoop);
   var dt = Math.min(clock.getDelta(), 0.05);
 
+  // Smooth curvature toggle
+  var cv = pathCurveUniform.value;
+  if (cv !== curveTarget) {
+    cv += (curveTarget - cv) * (1 - Math.exp(-CURVE_LERP_RATE * dt));
+    if (Math.abs(cv - curveTarget) < 1e-12) cv = curveTarget;
+    pathCurveUniform.value = cv;
+  }
+
   if (paused) { renderer.render(scene, camera); drawPauseScreen(); return; }
 
   if (state === 'playing') {
@@ -218,13 +231,15 @@ function gameLoop() {
     updateCamera();
     updateShadow();
     updateChunks();
-    screenFade = Math.min(0.6, screenFade + dt * 0.4);
+    screenFade = Math.min(0.15, screenFade + dt * 0.2);
+    deathTimer += dt;
+    if (deathTimer > DEATH_DITHER_DELAY) deathDitherUniform.value = Math.min(1, (deathTimer - DEATH_DITHER_DELAY) / DEATH_DITHER_DURATION);
     updateExplosion(dt);
     updateShipDebris(dt);
     updateSparks(dt);
     updateDust(dt);
   } else if (state === 'winning' || state === 'won') {
-    screenFade = Math.min(0.5, screenFade + dt * 0.3);
+    screenFade = Math.min(0.125, screenFade + dt * 0.075);
     if (state === 'winning') winTimer -= dt;
     playerSpeed = Math.min(MAX_SPEED, playerSpeed + ACCEL_RATE * dt);
     playerY += 3 * dt;

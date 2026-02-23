@@ -42,6 +42,7 @@ var DITHER_FUNCS =
 
 var playerZUniform = { value: 0 };
 var playerYUniform = { value: 0 };
+var deathDitherUniform = { value: 0 };
 
 var DITHER_DISCARD =
   'float dist = vWorldZ - playerZ;\n' +
@@ -59,6 +60,19 @@ var DITHER_DISCARD =
   'if (totalFade < 1.0) {\n' +
   '  float threshold = bayerDither(gl_FragCoord.xy);\n' +
   '  if (totalFade < threshold) discard;\n' +
+  '}\n' +
+  'if (deathDither > 0.0) {\n' +
+  '  float ahead = playerZ - vWorldZ;\n' +
+  '  float diag = ' + DEATH_DITHER_X.toFixed(2) + ' * vWorldX + ' + DEATH_DITHER_Z.toFixed(2) + ' * ahead;\n' +
+  '  float dMin = min(' + DEATH_DITHER_X.toFixed(2) + ', 0.0) * 20.0 + min(' + DEATH_DITHER_Z.toFixed(2) + ', 0.0) * 160.0;\n' +
+  '  float dMax = max(' + DEATH_DITHER_X.toFixed(2) + ', 0.0) * 20.0 + max(' + DEATH_DITHER_Z.toFixed(2) + ', 0.0) * 160.0;\n' +
+  '  float nd = (diag - dMin) / max(dMax - dMin, 1.0);\n' +
+  '  float edge = deathDither * 1.3;\n' +
+  '  float fade = clamp((edge - nd) / 0.15, 0.0, 1.0);\n' +
+  '  if (fade > 0.0) {\n' +
+  '    float thr = bayerDither(gl_FragCoord.xy);\n' +
+  '    if (fade > thr) discard;\n' +
+  '  }\n' +
   '}\n';
 
 function injectDither(mat, fadeUniform, curveUni) {
@@ -66,8 +80,9 @@ function injectDither(mat, fadeUniform, curveUni) {
     shader.uniforms.fadeAmount = fadeUniform;
     shader.uniforms.playerZ = playerZUniform;
     shader.uniforms.playerY = playerYUniform;
+    shader.uniforms.deathDither = deathDitherUniform;
 
-    var vertDecls = 'varying float vWorldZ;\nvarying float vWorldY;\n';
+    var vertDecls = 'varying float vWorldZ;\nvarying float vWorldY;\nvarying float vWorldX;\n';
 
     if (curveUni) {
       // Merged path: positions are world-space, apply curve in vertex shader
@@ -85,6 +100,7 @@ function injectDither(mat, fadeUniform, curveUni) {
         'transformed.y += pathCurve * cd2 * cd2;\n' +
         'vWorldZ = position.z;\n' +
         'vWorldY = transformed.y;\n' +
+        'vWorldX = position.x;\n' +
         '#include <project_vertex>'
       );
     } else {
@@ -95,13 +111,13 @@ function injectDither(mat, fadeUniform, curveUni) {
       );
       shader.vertexShader = shader.vertexShader.replace(
         '#include <project_vertex>',
-        '#include <project_vertex>\nvec4 wPos = modelMatrix * vec4(position, 1.0);\nvWorldZ = wPos.z;\nvWorldY = wPos.y;'
+        '#include <project_vertex>\nvec4 wPos = modelMatrix * vec4(position, 1.0);\nvWorldZ = wPos.z;\nvWorldY = wPos.y;\nvWorldX = wPos.x;'
       );
     }
 
     shader.fragmentShader = shader.fragmentShader.replace(
       'void main() {',
-      DITHER_FUNCS + 'uniform float fadeAmount;\nuniform float playerZ;\nuniform float playerY;\nvarying float vWorldZ;\nvarying float vWorldY;\nvoid main() {'
+      DITHER_FUNCS + 'uniform float fadeAmount;\nuniform float playerZ;\nuniform float playerY;\nuniform float deathDither;\nvarying float vWorldZ;\nvarying float vWorldY;\nvarying float vWorldX;\nvoid main() {'
     );
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <dithering_fragment>',

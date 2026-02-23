@@ -217,17 +217,13 @@ function drawHud(dt) {
 
   // Screen tint overlay
   if (screenFade > 0) {
-    if (state === 'dead') {
-      hudCtx.fillStyle = 'rgba(80, 0, 0, ' + screenFade + ')';
-    } else {
-      hudCtx.fillStyle = 'rgba(0, 0, 0, ' + screenFade + ')';
-    }
+    hudCtx.fillStyle = 'rgba(0, 0, 0, ' + screenFade + ')';
     hudCtx.fillRect(0, 0, hudCanvas.width, hudCanvas.height);
   }
 
-  // Death/win message (fades in with screenFade)
-  var ta = Math.min(1, screenFade / 0.3); // text alpha: 0→1 as fade goes 0→0.3
-  if (state === 'dead' && ta > 0) {
+  // Death/win message
+  if (state === 'dead' && screenFade > 0) {
+    var ta = 1;
     var cx = hudCanvas.width / 2;
     var cy = hudCanvas.height / 2;
     hudCtx.textAlign = 'center';
@@ -245,7 +241,8 @@ function drawHud(dt) {
     hudCtx.font = '16px monospace';
     hudCtx.fillText('R to restart | ESC for menu', cx, cy + 80);
     hudCtx.textAlign = 'left';
-  } else if ((state === 'winning' || state === 'won') && ta > 0) {
+  } else if ((state === 'winning' || state === 'won') && screenFade > 0) {
+    var ta = Math.min(1, screenFade / 0.3);
     var cx = hudCanvas.width / 2;
     var cy = hudCanvas.height / 2;
     hudCtx.textAlign = 'center';

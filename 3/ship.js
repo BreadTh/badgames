@@ -8,8 +8,8 @@ function createShadow() {
   c.width = 64; c.height = 64;
   var ctx = c.getContext('2d');
   var g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-  g.addColorStop(0, 'rgba(0,0,0,0.4)');
-  g.addColorStop(0.5, 'rgba(0,0,0,0.25)');
+  g.addColorStop(0, 'rgba(0,0,0,0.55)');
+  g.addColorStop(0.5, 'rgba(0,0,0,0.35)');
   g.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, 64, 64);

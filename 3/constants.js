@@ -7,6 +7,7 @@ var levelTimer = 0;
 var levelTimerMax = 0;
 var started = false; // true once player first accelerates
 var screenFade = 0; // 0-1, used for death/win tint overlay
+var deathTimer = 0;
 var levelStartTime = 0;
 var bestScores = JSON.parse(localStorage.getItem('spaceRunnerScores') || '{}');
 
@@ -40,9 +41,14 @@ var AIR_SPEED_CONTROL = 0.25; // fraction of accel/decel rate while airborne
 var BOUNCE_FACTOR = 0.45;
 var COYOTE_TIME = 0.12; // seconds after leaving ground where jump still works
 var VIEW_DISTANCE = 160; // how many rows ahead to show
-var FOG_START = 60; // distance where fog begins (doubled from 30)
+var FOG_START = 15; // distance where fog begins
 var PATH_CURVE = 0.00000009; // visual upward curve of distant track (quartic)
 var CURVE_START = 1/5; // fraction of view distance before curve begins
+var CURVE_LERP_RATE = 12; // exponential lerp rate for curvature toggle (~0.25s)
+var DEATH_DITHER_DELAY = 0.5; // seconds before dither sweep starts
+var DEATH_DITHER_DURATION = 0.75; // seconds for dither sweep
+var DEATH_DITHER_X = 0;  // weight of world X in sweep direction
+var DEATH_DITHER_Z = -1; // weight of distance-ahead in sweep direction (negative = far end first)
 var BASE_SPEED = 5;
 var MAX_SPEED = 40;
 var ACCEL_RATE = 16;
@@ -79,6 +85,7 @@ var mergedMeshes = {};    // bucket key -> THREE.Mesh
 var mergedDirty = false;
 var curveStart = VIEW_DISTANCE * CURVE_START;
 var pathCurveUniform = { value: PATH_CURVE };
+var curveTarget = PATH_CURVE;
 
 // Input
 var keys = {};

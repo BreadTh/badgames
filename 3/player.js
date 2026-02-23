@@ -31,10 +31,12 @@ var deathSpeed = 0;
 var frozenKeys = null;
 var glideLockedIn = false;
 var padSustain = false;
+var deathReason = '';
 function die(reason) {
   if (!alive) return;
   alive = false;
   state = 'dead';
+  deathReason = reason;
   deathSpeed = playerSpeed;
   stopContinuousSounds();
   if (reason === 'crash' || reason === 'kill') {

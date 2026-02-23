@@ -191,8 +191,9 @@ function init3D() {
     );
   }
   starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starVerts, 3));
-  var starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.3 });
+  var starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.3, depthTest: false });
   starField = new THREE.Points(starGeo, starMat);
+  starField.renderOrder = -1;
   scene.add(starField);
 
   // Planet
