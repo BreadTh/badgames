@@ -221,6 +221,15 @@ function drawHud(dt) {
     hudCtx.fillRect(0, 0, hudCanvas.width, hudCanvas.height);
   }
 
+  // Playback indicator (blinking)
+  if (isPlayback && performance.now() % 1000 < 500) {
+    hudCtx.fillStyle = 'rgba(255, 80, 80, 0.9)';
+    hudCtx.font = 'bold 18px monospace';
+    hudCtx.textAlign = 'left';
+    var pbText = playbackDebug ? 'PLAYBACK (DEBUG)' : 'PLAYBACK';
+    hudCtx.fillText(pbText, margin, hudCanvas.height - 30);
+  }
+
   // Death/win message
   if (state === 'dead' && screenFade > 0) {
     var ta = 1;
@@ -241,7 +250,11 @@ function drawHud(dt) {
     hudCtx.fillText(deathScoreText, cx, cy + 56);
     hudCtx.fillStyle = 'rgba(255, 255, 255, ' + (ta * 0.7) + ')';
     hudCtx.font = '16px monospace';
-    hudCtx.fillText('R to restart | ESC for menu', cx, cy + 80);
+    if (!isPlayback) {
+      hudCtx.fillText('R restart | ESC menu | X download', cx, cy + 80);
+    } else {
+      hudCtx.fillText('ESC to exit playback', cx, cy + 80);
+    }
     hudCtx.textAlign = 'left';
   } else if ((state === 'winning' || state === 'won') && screenFade > 0) {
     var ta = Math.min(1, screenFade / 0.3);
@@ -292,13 +305,17 @@ function drawHud(dt) {
       ly += 24;
       hudCtx.fillStyle = 'rgba(255, 255, 255, ' + (ta * 0.7) + ')';
       hudCtx.font = '16px monospace';
-      hudCtx.fillText('R to restart | ESC for menu', cx, ly);
+      if (!isPlayback) {
+        hudCtx.fillText('R restart | ESC menu | X download', cx, ly);
+      } else {
+        hudCtx.fillText('ESC to exit playback', cx, ly);
+      }
     }
     hudCtx.textAlign = 'left';
   }
 
   // Controls hint (bottom center, fades out after a few seconds)
-  if (state === 'playing' && alive) {
+  if (state === 'playing' && alive && !isPlayback) {
     var elapsed = performance.now() - levelStartTime;
     var hintAlpha = elapsed < 5000 ? 0.5 : Math.max(0, 0.5 - (elapsed - 5000) / 2000);
     if (hintAlpha > 0) {
@@ -311,7 +328,7 @@ function drawHud(dt) {
   }
 
   // Debug hint (permanent bottom bar)
-  if (debugMode) {
+  if (debugMode && !isPlayback) {
     var dbgY = hudCanvas.height - 12;
     hudCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
     hudCtx.fillRect(0, dbgY - 14, hudCanvas.width, 20);
@@ -319,7 +336,9 @@ function drawHud(dt) {
     hudCtx.font = '12px monospace';
     hudCtx.textAlign = 'center';
     var hint = '1:kill  2:invincible' + (debugInvincible ? ' [ON]' : '') +
-      '  3:revive  4:max spd  5:warp back  6:fuel  7:oxy  8:no fuel  9:no oxy  0:stop';
+      '  3:revive  4:max spd  5:warp back  6:fuel  7:oxy  8:no fuel  9:no oxy  0:stop' +
+      '  I:pink' +
+      '  O:colliders' + (debugWireframe ? ' [ON]' : '');
     hudCtx.fillText(hint, hudCanvas.width / 2, dbgY);
     hudCtx.textAlign = 'left';
   }

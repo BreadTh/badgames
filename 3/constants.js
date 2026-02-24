@@ -93,9 +93,15 @@ var curveTarget = PATH_CURVE;
 
 // Input
 var keys = {};
-window.addEventListener('keydown', function(e) { keys[e.code] = true; });
-window.addEventListener('keyup', function(e) { keys[e.code] = false; });
-window.addEventListener('blur', function() { keys = {}; });
+window.addEventListener('keydown', function(e) {
+  if (!isPlayback) keys[e.code] = true;
+  if (isRecording && !e.repeat) recKeyDown(e.code);
+});
+window.addEventListener('keyup', function(e) {
+  if (!isPlayback) keys[e.code] = false;
+  if (isRecording) recKeyUp(e.code);
+});
+window.addEventListener('blur', function() { if (!isPlayback) keys = {}; });
 
 // Timers
 var deathTimer = 0;
@@ -105,6 +111,10 @@ var stuckTimer = 0;
 // Debug
 var debugMode = false;
 var debugInvincible = false;
+var debugInspect = false;
+var debugPlane = null;
+var debugWireframe = false;
+var debugWireMesh = null;
 var debugTypeBuffer = '';
 var safeX = 0;
 var safeY = 0;

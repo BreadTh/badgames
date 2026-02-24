@@ -28,12 +28,14 @@ function pointInBlock(x, y, rowIdx) {
 }
 
 var deathSpeed = 0;
+var lastRecRow = -1;
 var frozenKeys = null;
 var glideLockedIn = false;
 var padSustain = false;
 var deathReason = '';
 function die(reason) {
   if (!alive) return;
+  if (isRecording) recordDeath(reason);
   alive = false;
   state = 'dead';
   deathReason = reason;
@@ -50,14 +52,18 @@ function die(reason) {
     shipMesh.visible = false;
   }
   calcAndSaveScore();
+  if (isRecording) recordScore();
 }
 
 function win() {
+  if (isRecording) recordWin();
   state = 'winning';
   stopContinuousSounds();
   winTimer = 2.0;
-  clearedLevels[currentLevel] = true;
-  localStorage.setItem('spaceRunnerCleared', JSON.stringify(clearedLevels));
+  if (!isPlayback) {
+    clearedLevels[currentLevel] = true;
+    localStorage.setItem('spaceRunnerCleared', JSON.stringify(clearedLevels));
+  }
   SFX.win();
 }
 
@@ -464,6 +470,13 @@ function updatePlayer(dt) {
 
   playerLane = xToLane(playerX);
 
+  // Record sync on row crossing
+  var curRecRow = zToRow(playerZ);
+  if (isRecording && curRecRow !== lastRecRow) {
+    lastRecRow = curRecRow;
+    recordSync(playerX, playerY, playerZ, playerSpeed, playerVY, playerVX);
+  }
+
   // ---- GROUND CHECKS ----
   var gRows = playerRows();
   // Pick the block the player is standing on for ground effects
@@ -599,7 +612,7 @@ function updatePlayer(dt) {
   }
 
   // Fell off map
-  if (playerY < -20 && !debugInvincible) die('fall');
+  if (playerY < -20) die('fall');
 
   // Death conditions — stranded when out of resources and stopped
   if ((noOxygen || !hasPropellant) && playerSpeed <= 0 && grounded && !debugInvincible) {
@@ -637,6 +650,7 @@ function updateCamera() {
     planetMesh.position.z = playerZ;
     planetMesh.rotation.y += 0.00005;
   }
+  if (debugPlane) debugPlane.position.z = playerZ;
   if (cloudMesh) cloudMesh.rotation.y += 0.0003;
 
   if (engineMatRef) {

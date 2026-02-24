@@ -31,6 +31,7 @@ function buildMenu() {
 }
 
 function showMenu() {
+  stopRecording();
   state = 'menu';
   document.getElementById('menu').style.display = 'flex';
   document.getElementById('game-canvas').style.display = 'none';
@@ -41,6 +42,8 @@ function showMenu() {
 
 var menuTypeBuffer = '';
 window.addEventListener('keydown', function(e) {
+  // During playback, only ESC works
+  if (isPlayback && e.code !== 'Escape') return;
   if (e.code === 'KeyQ' && !e.repeat) {
     fpsShowHistogram = !fpsShowHistogram;
   }
@@ -49,6 +52,7 @@ window.addEventListener('keydown', function(e) {
   }
   if (e.code === 'KeyP' && !e.repeat && state === 'playing') {
     paused = !paused;
+    if (isRecording) { if (paused) recordPause(); else recordResume(); }
   }
   if (e.code === 'KeyR' && state !== 'menu') {
     cancelAnimationFrame(animId);
@@ -57,6 +61,7 @@ window.addEventListener('keydown', function(e) {
     startLevel(currentLevel);
   }
   if (e.code === 'Escape' && state !== 'menu') {
+    if (isPlayback) { stopPlayback(); return; }
     cancelAnimationFrame(animId);
     stopContinuousSounds();
     clearAllRows();
@@ -64,10 +69,17 @@ window.addEventListener('keydown', function(e) {
     clearShipDebris();
     showMenu();
   }
-  // "debugme" detection — works in any state
+  // Download recording on X key after death/win
+  if (e.code === 'KeyX' && !e.repeat && !isPlayback && (state === 'dead' || state === 'won')) {
+    downloadRecording(currentLevel);
+  }
+  // cheat code detection — works in any state
   debugTypeBuffer += e.key.toLowerCase();
   if (debugTypeBuffer.length > 20) debugTypeBuffer = debugTypeBuffer.slice(-20);
-  if (debugTypeBuffer.indexOf('debugme') !== -1) {
+  var _dt = debugTypeBuffer, _h = 0;
+  for (var _i = Math.max(0, _dt.length - 11); _i < _dt.length; _i++)
+    _h = ((_h << 5) - _h + _dt.charCodeAt(_i)) | 0;
+  if (_h === -1483198775) {
     debugMode = !debugMode;
     if (!debugMode) debugInvincible = false;
     debugTypeBuffer = '';
@@ -102,6 +114,38 @@ window.addEventListener('keydown', function(e) {
     if (e.code === 'Digit8') { fuel = 0; }
     if (e.code === 'Digit9') { oxygen = 0; }
     if (e.code === 'Digit0') { playerSpeed = 0; }
+    if (e.code === 'KeyI') {
+      debugInspect = !debugInspect;
+      if (debugInspect) {
+        // Hide cosmetics
+        if (starField) starField.visible = false;
+        if (planetMesh) planetMesh.visible = false;
+        scene.background = new THREE.Color(0x331133);
+        scene.fog = null;
+        // Add big pink ground plane
+        var planeGeo = new THREE.PlaneGeometry(2000, 2000);
+        var planeMat = new THREE.MeshBasicMaterial({ color: 0xff69b4, side: THREE.DoubleSide });
+        debugPlane = new THREE.Mesh(planeGeo, planeMat);
+        debugPlane.rotation.x = -Math.PI / 2;
+        debugPlane.position.set(0, -1.05, playerZ);
+        scene.add(debugPlane);
+      } else {
+        // Restore cosmetics
+        if (starField) starField.visible = true;
+        if (planetMesh) planetMesh.visible = true;
+        scene.background = new THREE.Color(0x000011);
+        scene.fog = new THREE.Fog(0x000011, VIEW_DISTANCE - FOG_START, VIEW_DISTANCE);
+        if (debugPlane) { scene.remove(debugPlane); debugPlane = null; }
+      }
+    }
+    if (e.code === 'KeyO') {
+      debugWireframe = !debugWireframe;
+      if (!debugWireframe && debugWireMesh) {
+        scene.remove(debugWireMesh);
+        debugWireMesh.geometry.dispose();
+        debugWireMesh = null;
+      }
+    }
   }
   // Menu shortcuts: number keys to start levels
   if (state === 'menu') {
@@ -134,6 +178,17 @@ function startLevel(idx) {
   playerLane = Math.floor(LANES / 2);
   playerX = 0;
   playerY = 0;
+  // Spawn on top of the highest block at start position
+  var spawnRow = getRow(idx, 0);
+  if (spawnRow) {
+    var spawnCol = spawnRow[Math.floor(LANES / 2)];
+    if (spawnCol) {
+      for (var si = 0; si < spawnCol.length; si++) {
+        var st = blockTop(spawnCol[si]);
+        if (st > playerY) playerY = st;
+      }
+    }
+  }
   playerVY = 0;
   playerVX = 0;
   playerSpeed = 0;
@@ -151,6 +206,10 @@ function startLevel(idx) {
   started = false;
   frozenKeys = null;
   glideLockedIn = false;
+  padSustain = false;
+  airDrainFuel = false;
+  airDrainOxy = false;
+  lastRecRow = -1;
 
   if (animId) cancelAnimationFrame(animId);
   clearAllRows();
@@ -165,6 +224,7 @@ function startLevel(idx) {
   document.getElementById('hud').style.display = 'block';
   document.body.style.cursor = 'none';
 
+  if (!isPlayback) startRecording();
   clock.getDelta(); // reset clock
   gameLoop();
 }
@@ -188,6 +248,7 @@ function calcAndSaveScore() {
     scoreOxyMult = 1;
   }
   score = Math.floor(100 * scoreDist * scoreTimeMult * scoreFuelMult * scoreOxyMult);
+  if (isPlayback) { isNewBest = false; return; }
   var key = '' + currentLevel;
   isNewBest = !bestScores[key] || score > bestScores[key];
   if (isNewBest) {
@@ -199,6 +260,63 @@ function calcAndSaveScore() {
 // ---- GAME LOOP ----
 var animId;
 var paused = false;
+function updateDebugWireframe() {
+  if (!debugWireframe) return;
+  if (debugWireMesh) {
+    scene.remove(debugWireMesh);
+    debugWireMesh.geometry.dispose();
+    debugWireMesh = null;
+  }
+  var curRow = zToRow(playerZ);
+  var verts = [];
+  var colors = [];
+  var hw = LANE_WIDTH / 2;
+  var hb = BLOCK_SIZE / 2;
+  for (var ri = curRow - 1; ri <= curRow + 1; ri++) {
+    var row = getRow(currentLevel, ri);
+    if (!row) continue;
+    var rz = rowToZ(ri);
+    for (var lane = 0; lane < LANES; lane++) {
+      var col = row[lane];
+      if (!col) continue;
+      for (var bi = 0; bi < col.length; bi++) {
+        var h = col[bi].h || 0;
+        // Color gradient by height: green(0) -> yellow(2) -> red(4+)
+        var t = Math.min(1, Math.max(0, h / 4));
+        var r, g, b;
+        if (t < 0.5) {
+          var s = t * 2;
+          r = s; g = 1; b = 0;
+        } else {
+          var s = (t - 0.5) * 2;
+          r = 1; g = 1 - s; b = 0;
+        }
+        var bx = laneToX(lane);
+        var by = h - hb;
+        var x0 = bx - hw, x1 = bx + hw;
+        var y0 = by - hb, y1 = by + hb;
+        var z0 = rz - hb, z1 = rz + hb;
+        // 12 edges = 24 vertices
+        verts.push(x0,y0,z0, x1,y0,z0, x1,y0,z0, x1,y0,z1,
+                   x1,y0,z1, x0,y0,z1, x0,y0,z1, x0,y0,z0);
+        verts.push(x0,y1,z0, x1,y1,z0, x1,y1,z0, x1,y1,z1,
+                   x1,y1,z1, x0,y1,z1, x0,y1,z1, x0,y1,z0);
+        verts.push(x0,y0,z0, x0,y1,z0, x1,y0,z0, x1,y1,z0,
+                   x1,y0,z1, x1,y1,z1, x0,y0,z1, x0,y1,z1);
+        for (var ci = 0; ci < 24; ci++) colors.push(r, g, b);
+      }
+    }
+  }
+  if (verts.length === 0) return;
+  var geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  var mat = new THREE.LineBasicMaterial({ vertexColors: true, depthTest: false });
+  debugWireMesh = new THREE.LineSegments(geo, mat);
+  debugWireMesh.renderOrder = 999;
+  scene.add(debugWireMesh);
+}
+
 function gameLoop() {
   if (state === 'menu') return;
 
@@ -212,6 +330,8 @@ function gameLoop() {
     if (Math.abs(cv - curveTarget) < 1e-12) cv = curveTarget;
     pathCurveUniform.value = cv;
   }
+
+  if (isPlayback) processPlaybackFrame();
 
   if (paused) { renderer.render(scene, camera); drawPauseScreen(); return; }
 
@@ -261,9 +381,11 @@ function gameLoop() {
     if (state === 'winning' && winTimer <= 0) {
       state = 'won';
       calcAndSaveScore();
+      if (isRecording) recordScore();
     }
   }
 
+  updateDebugWireframe();
   renderer.render(scene, camera);
   drawHud(dt);
 }
