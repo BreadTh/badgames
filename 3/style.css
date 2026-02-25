@@ -20,3 +20,5 @@ canvas { display: block; }
 #hud { position: absolute; top: 0; left: 0; width: 100%; pointer-events: none; display: none; }
 #game-canvas { display: none; }
 #custom-cursor { position: fixed; width: 24px; height: 24px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.35); pointer-events: none; z-index: 10000; transform: translate(-50%, -50%); display: none; transition: opacity 1s; }
+#unofficial-watermark { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-35deg); font-size: 12vw; font-family: monospace; font-weight: bold; color: rgba(255, 50, 50, 0.35); letter-spacing: 0.15em; pointer-events: none; z-index: 9998; white-space: nowrap; }
+body.in-game #unofficial-watermark { color: rgba(255, 50, 50, 0.07); }

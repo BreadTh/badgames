@@ -135,6 +135,7 @@ function showMenuImmediate() {
   clearShipDebris();
   disposeMergedChunks();
   state = 'menu';
+  document.body.classList.remove('in-game');
   document.getElementById('menu').style.display = 'flex';
   document.getElementById('game-canvas').style.display = 'none';
   document.getElementById('hud').style.display = 'none';
@@ -367,6 +368,7 @@ function startLevelImmediate(idx) {
   shipMesh.visible = true;
   lastStarZ = 0;
   levelStartTime = performance.now();
+  document.body.classList.add('in-game');
   document.getElementById('menu').style.display = 'none';
   document.getElementById('game-canvas').style.display = 'block';
   document.getElementById('hud').style.display = 'block';
@@ -615,6 +617,16 @@ function gameLoop() {
 
 // ---- BOOT ----
 window.bootGame = function() {
+  // Verify host
+  var _hn = location.hostname, _hh = 0;
+  for (var _hi = 0; _hi < _hn.length; _hi++) _hh = ((_hh << 5) - _hh + _hn.charCodeAt(_hi)) | 0;
+  if (_hh !== 1504408847) {
+    UNOFFICIAL = true;
+    var _wm = document.createElement('div');
+    _wm.id = 'unofficial-watermark';
+    _wm.textContent = 'UNOFFICIAL';
+    document.body.appendChild(_wm);
+  }
   init3D();
   initHud();
   // Menu starts hidden (HTML has display:none), show it now behind the overlay

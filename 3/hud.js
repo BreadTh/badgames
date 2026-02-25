@@ -573,11 +573,11 @@ function drawPlaybackBar() {
   hudCtx.arc(headX, midY, headR, 0, Math.PI * 2);
   hudCtx.fill();
 
-  // Debug tag (top-left of bar)
-  if (playbackDebug) {
-    hudCtx.fillStyle = 'rgba(255, 80, 80, 0.8)';
-    hudCtx.font = '10px monospace';
-    hudCtx.fillText('DEBUG', pad, barY - 4);
+  // Debug tag (top-left of bar) — large, blinking
+  if (playbackDebug && Math.floor(performance.now() / 800) % 2 === 0) {
+    hudCtx.fillStyle = 'rgba(255, 80, 80, 0.9)';
+    hudCtx.font = 'bold 30px monospace';
+    hudCtx.fillText('CHEATS ENABLED', pad, barY - 4);
   }
 
   hudCtx.textAlign = 'left';

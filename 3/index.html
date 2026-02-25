@@ -5,7 +5,7 @@
 <link rel="stylesheet" id="main-css" href="style.css">
 </head>
 <body>
-<div id="fade-overlay"><span id="fade-loading">LOADING...</span></div>
+<div id="fade-overlay"><span id="fade-loading">LOADING...<br><span id="fade-progress"></span></span></div>
 <div id="menu" style="display:none">
   <div id="version"></div>
   <h1>SPACE RUNNER</h1>
@@ -23,7 +23,8 @@
   <canvas id="hud-canvas"></canvas>
 </div>
 <script>
-var GAME_VERSION = '1.0.0';
+var GAME_VERSION = '1.0.1';
+var UNOFFICIAL = false;
 
 // Set version text and bust CSS cache
 document.getElementById('version').textContent = 'v' + GAME_VERSION;
@@ -56,7 +57,9 @@ requestAnimationFrame(function() { requestAnimationFrame(function() {
     'scene.js','recording.js','game.js'
   ];
   var i = 0;
+  var progressEl = document.getElementById('fade-progress');
   function next() {
+    progressEl.textContent = i + ' / ' + scripts.length;
     if (i >= scripts.length) { scriptsReady = true; maybeStart(); return; }
     var s = document.createElement('script');
     var src = scripts[i++];

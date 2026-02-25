@@ -47,7 +47,7 @@ function startRecording() {
   recEvents = [];
   recKeyState = {};
   recStartTime = performance.now();
-  recDebugWasOn = debugMode;
+  recDebugWasOn = debugMode || UNOFFICIAL;
   // Capture keys already held (e.g. after mid-game restart)
   for (var code in keys) {
     if (keys[code]) {
