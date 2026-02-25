@@ -2,36 +2,65 @@
 <html>
 <head>
 <title>Space Runner</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" id="main-css" href="style.css">
 </head>
 <body>
 <div id="fade-overlay"><span id="fade-loading">LOADING...</span></div>
 <div id="menu" style="display:none">
+  <div id="version"></div>
   <h1>SPACE RUNNER</h1>
-  <div class="subtitle">select a level</div>
-  <div id="total-score"></div>
+  <input type="text" id="player-name" maxlength="30" spellcheck="false" autocomplete="off">
+  <div class="subtitle">player name</div>
+  <div class="section-title">LEVEL SELECT</div>
   <div id="level-list"></div>
+  <div id="total-score"></div>
   <button id="load-playback-btn" class="level-btn" style="margin-top:1em;justify-content:center">Load Playback</button>
   <input type="file" id="playback-file" accept=".run" style="display:none">
 </div>
 <canvas id="game-canvas"></canvas>
+<div id="custom-cursor"></div>
 <div id="hud">
   <canvas id="hud-canvas"></canvas>
 </div>
 <script>
-// Let the browser paint the loading screen, then load game scripts
+var GAME_VERSION = '1.0.0';
+
+// Set version text and bust CSS cache
+document.getElementById('version').textContent = 'v' + GAME_VERSION;
+document.getElementById('main-css').href = 'style.css?v=' + GAME_VERSION;
+
+// Fade in loading text immediately, then load game scripts
 requestAnimationFrame(function() { requestAnimationFrame(function() {
+  var el = document.getElementById('fade-loading');
+  var start = performance.now();
+  function fadeIn() {
+    var t = Math.min(1, (performance.now() - start) / 250);
+    el.style.opacity = t;
+    if (t < 1) requestAnimationFrame(fadeIn);
+  }
+  requestAnimationFrame(fadeIn);
+
+  var scriptsReady = false;
+  var timerReady = false;
+  function maybeStart() {
+    if (scriptsReady && timerReady) window.bootGame();
+  }
+
+  setTimeout(function() { timerReady = true; maybeStart(); }, 1000);
+
+  var vq = '?v=' + GAME_VERSION;
   var scripts = [
     'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js',
-    'levels.js','level1.js','level2.js','level3.js','level4.js','level5.js','level6.js','level7.js',
+    'words.js','levels.js','level1.js','level2.js','level3.js','level4.js','level5.js','level6.js','level7.js',
     'sounds.js','constants.js','chunks.js','ship.js','particles.js','hud.js','player.js',
     'scene.js','recording.js','game.js'
   ];
   var i = 0;
   function next() {
-    if (i >= scripts.length) return;
+    if (i >= scripts.length) { scriptsReady = true; maybeStart(); return; }
     var s = document.createElement('script');
-    s.src = scripts[i++];
+    var src = scripts[i++];
+    s.src = src.indexOf('://') >= 0 ? src : src + vq;
     s.onload = next;
     document.body.appendChild(s);
   }

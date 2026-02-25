@@ -49,7 +49,7 @@ function die(reason) {
   } else if (reason === 'stranded') {
     // Ship stays visible, no explosion
   } else {
-    SFX.falling();
+    if (!sndFallingWas) SFX.falling();
     shipMesh.visible = false;
   }
   calcAndSaveScore();
@@ -119,7 +119,7 @@ function updatePlayer(dt) {
     }
     if (canAccel && (inp['ArrowUp'] || inp['KeyW'])) {
       if (hasPropellant) {
-        if (!started) started = true;
+        if (!started) { started = true; startedTime = performance.now(); }
         var rate = wallEscape ? ACCEL_RATE * 0.6 : ACCEL_RATE;
         var boostMax = MAX_SPEED * (1 + BOOST_SPEED_PCT);
         playerSpeed = Math.min(boostMax, playerSpeed + rate * dt);
@@ -181,8 +181,8 @@ function updatePlayer(dt) {
   var lateralFriction = grounded ? 8 : 0.5;
   var steering = false;
   var canSteer = grounded || hasPropellant;
-  if (canSteer && (inp['ArrowLeft'] || inp['KeyA'])) { playerVX -= lateralAccel * dt; steering = true; if (!started) started = true; }
-  if (canSteer && (inp['ArrowRight'] || inp['KeyD'])) { playerVX += lateralAccel * dt; steering = true; if (!started) started = true; }
+  if (canSteer && (inp['ArrowLeft'] || inp['KeyA'])) { playerVX -= lateralAccel * dt; steering = true; if (!started) { started = true; startedTime = performance.now(); } }
+  if (canSteer && (inp['ArrowRight'] || inp['KeyD'])) { playerVX += lateralAccel * dt; steering = true; if (!started) { started = true; startedTime = performance.now(); } }
   if (steering && started) spendFuel(0.8 * dt);
   if (grounded && !(inp['ArrowLeft'] || inp['KeyA'] || inp['ArrowRight'] || inp['KeyD'])) {
     playerVX *= Math.max(0, 1 - lateralFriction * dt);
@@ -199,7 +199,7 @@ function updatePlayer(dt) {
   // Jump initiation (once per frame)
   var canJump = grounded || coyoteTimer > 0;
   if ((inp['Space']) && canJump && hasPropellant && !noControl) {
-    if (!started) started = true;
+    if (!started) { started = true; startedTime = performance.now(); }
     var speedPctJ = playerSpeed === 0 ? 1 : playerSpeed / MAX_SPEED;
     playerVY = JUMP_FORCE * (0.75 + 0.25 * speedPctJ);
     grounded = false;
@@ -302,6 +302,8 @@ function updatePlayer(dt) {
       else if (!nearGround && playerVY <= 0) glideLockedIn = true;
       var gliding = inp['Space'] && playerVY <= 0 && fuel > 0 && (!nearGround || glideLockedIn);
       var sustaining = inp['Space'] && playerVY > 0 && hasPropellant;
+      isSustaining = sustaining;
+      isGliding = gliding;
       if (padSustain && (playerVY <= 0 || fuel <= 0)) padSustain = false;
       if (gliding) {
         if (!debugInvincible) fuel = Math.max(0, fuel - FUEL_GLIDE_COST * subDt);
@@ -313,12 +315,15 @@ function updatePlayer(dt) {
       playerY += playerVY * subDt;
 
       // Landing check — all rows × both X edges
+      // Use merged row range (current + pre-Z-move) so we detect surfaces
+      // the player just flew past in Z — prevents false side collisions at step-downs
       if (playerVY <= 0) {
         playerRowsRange();
+        var landLo = Math.min(prevLo, _prLo), landHi = Math.max(prevHi, _prHi);
         var landXL = playerX - hw, landXR = playerX + hw;
         var landSurface = null;
         var landBlock = null;
-        for (var lri = _prLo; lri <= _prHi; lri++) {
+        for (var lri = landLo; lri <= landHi; lri++) {
           for (var lxi = 0; lxi < 2; lxi++) {
             var col = getColumnAtX(lri, lxi === 0 ? landXL : landXR);
             for (var lbi = 0; lbi < col.length; lbi++) {

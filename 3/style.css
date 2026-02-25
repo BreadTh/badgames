@@ -2,9 +2,13 @@
 body { overflow: hidden; background: #000; color: #fff; font-family: monospace; }
 canvas { display: block; }
 #menu { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; background: radial-gradient(ellipse at center, #0a0a2e 0%, #000 70%); }
+#version { position: absolute; top: 10px; left: 12px; font-size: 0.75em; color: #0af; }
 #menu h1 { font-size: 3em; margin-bottom: 0.3em; color: #0af; text-shadow: 0 0 20px rgba(0,170,255,0.5); letter-spacing: 0.15em; }
+#player-name { font-size: 1.2em; font-family: monospace; background: transparent; border: none; border-bottom: 1px solid #334; color: #0af; text-align: center; padding: 0.2em 0.5em; margin-bottom: 0.5em; outline: none; letter-spacing: 0.08em; width: 300px; }
+#player-name:focus { border-bottom-color: #0af; }
 #menu .subtitle { font-size: 0.9em; color: #556; margin-bottom: 1em; }
-#total-score { font-size: 1.6em; color: #0af; text-shadow: 0 0 12px rgba(0,170,255,0.4); margin-bottom: 1.2em; letter-spacing: 0.08em; display: none; }
+#menu .section-title { font-size: 1.4em; color: #0af; letter-spacing: 0.12em; margin-bottom: 0.5em; }
+#total-score { font-size: 1.6em; color: #0af; text-shadow: 0 0 12px rgba(0,170,255,0.4); margin-top: 0.4em; margin-bottom: 1.5em; letter-spacing: 0.08em; display: none; }
 #menu .level-btn { display: flex; justify-content: space-between; align-items: center; width: 400px; font-size: 1.3em; padding: 0.6em 1.2em; margin: 0.3em; cursor: pointer; background: #111; color: #aaa; border: 1px solid #333; font-family: monospace; text-align: left; transition: all 0.15s; }
 #menu .level-btn:hover { border-color: #0af; color: #fff; background: #0a1a2a; }
 #menu .level-btn.cleared { border-color: #0a4; color: #0d6; }
@@ -15,3 +19,4 @@ canvas { display: block; }
 #fade-loading { color: #556; font-size: 1.2em; font-family: monospace; letter-spacing: 0.1em; opacity: 0; }
 #hud { position: absolute; top: 0; left: 0; width: 100%; pointer-events: none; display: none; }
 #game-canvas { display: none; }
+#custom-cursor { position: fixed; width: 24px; height: 24px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.35); pointer-events: none; z-index: 10000; transform: translate(-50%, -50%); display: none; transition: opacity 1s; }

@@ -7,6 +7,7 @@ var isNewBest = false;
 var levelTimer = 0;
 var levelTimerMax = 0;
 var started = false; // true once player first accelerates
+var startedTime = 0; // timestamp when started flipped to true
 var screenFade = 0; // 0-1, used for death/win tint overlay
 var deathTimer = 0;
 var levelStartTime = 0;
@@ -25,6 +26,8 @@ var oxygen = 100;
 var alive = true;
 var grounded = true;
 var coyoteTimer = 0;
+var isSustaining = false; // holding space while rising (jump extend)
+var isGliding = false;    // holding space while falling (glide)
 
 // Constants
 var LANE_WIDTH = 1;

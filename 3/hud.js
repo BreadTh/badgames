@@ -346,9 +346,9 @@ function drawHud(dt) {
     hudCtx.textAlign = 'left';
   }
 
-  // Controls hint (bottom center, fades out after a few seconds)
+  // Controls hint (bottom center, fades out after a few seconds once moving)
   if (state === 'playing' && alive && !isPlayback) {
-    var elapsed = performance.now() - levelStartTime;
+    var elapsed = started ? performance.now() - startedTime : 0;
     var hintAlpha = elapsed < 5000 ? 0.5 : Math.max(0, 0.5 - (elapsed - 5000) / 2000);
     if (hintAlpha > 0) {
       hudCtx.fillStyle = 'rgba(255, 255, 255, ' + hintAlpha + ')';
@@ -521,7 +521,11 @@ function drawPlaybackBar() {
       var mk = playbackMarkers[mi];
       var mx = scrubX + (mk.ms / totalMs) * scrubW;
       var mt = mk.type;
-      if (mt === 'death') {
+      if (mt === 'pause') {
+        hudCtx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+        var mx2 = scrubX + (mk.endMs / totalMs) * scrubW;
+        hudCtx.fillRect(mx, scrubY, Math.max(3, mx2 - mx), scrubH);
+      } else if (mt === 'death') {
         hudCtx.fillStyle = 'rgba(255, 40, 40, 0.9)';
         hudCtx.fillRect(mx - 2, scrubY, 4, scrubH);
       } else if (mt === 'win') {
@@ -529,13 +533,16 @@ function drawPlaybackBar() {
         hudCtx.fillRect(mx - 2, scrubY, 4, scrubH);
       } else if (mt === 'fuel') {
         hudCtx.fillStyle = 'rgba(255, 136, 0, 0.7)';
-        hudCtx.fillRect(mx - 1, scrubY, 3, scrubH);
+        var mx2 = mk.endMs ? scrubX + (mk.endMs / totalMs) * scrubW : mx + 3;
+        hudCtx.fillRect(mx, scrubY, Math.max(3, mx2 - mx), scrubH);
       } else if (mt === 'oxy') {
         hudCtx.fillStyle = 'rgba(0, 130, 255, 0.7)';
-        hudCtx.fillRect(mx - 1, scrubY, 3, scrubH);
+        var mx2 = mk.endMs ? scrubX + (mk.endMs / totalMs) * scrubW : mx + 3;
+        hudCtx.fillRect(mx, scrubY, Math.max(3, mx2 - mx), scrubH);
       } else if (mt === 'fueloxy') {
         hudCtx.fillStyle = 'rgba(200, 255, 100, 0.8)';
-        hudCtx.fillRect(mx - 1, scrubY, 3, scrubH);
+        var mx2 = mk.endMs ? scrubX + (mk.endMs / totalMs) * scrubW : mx + 3;
+        hudCtx.fillRect(mx, scrubY, Math.max(3, mx2 - mx), scrubH);
       } else if (mt === 'jump') {
         hudCtx.fillStyle = 'rgba(255, 255, 255, 0.4)';
         hudCtx.fillRect(mx, scrubY, 1, scrubH);

@@ -31,8 +31,71 @@ function fadeFromBlack(duration, callback) {
   fadeAnimId = requestAnimationFrame(tick);
 }
 
+// ---- CUSTOM CURSOR ----
+var customCursor = document.getElementById('custom-cursor');
+var cursorIdleTimer = null;
+var cursorHidden = true;
+
+window.addEventListener('mousemove', function(e) {
+  if (document.body.style.cursor !== 'none') return;
+  customCursor.style.left = e.clientX + 'px';
+  customCursor.style.top = e.clientY + 'px';
+  if (cursorHidden) {
+    customCursor.style.display = 'block';
+    // Force reflow so the transition triggers from 0
+    customCursor.offsetHeight;
+    cursorHidden = false;
+  }
+  customCursor.style.opacity = '1';
+  customCursor.style.transition = 'opacity 0.05s';
+  clearTimeout(cursorIdleTimer);
+  cursorIdleTimer = setTimeout(function() {
+    customCursor.style.transition = 'opacity 1s';
+    customCursor.style.opacity = '0';
+  }, 1000);
+});
+
+function hideCustomCursor() {
+  clearTimeout(cursorIdleTimer);
+  customCursor.style.display = 'none';
+  customCursor.style.opacity = '0';
+  cursorHidden = true;
+}
+
+// ---- PLAYER NAME ----
+var playerNameInput = document.getElementById('player-name');
+
+
+
+function generateRandomName() {
+  var a = Math.floor(Math.random() * WORDLIST.length);
+  var b;
+  do { b = Math.floor(Math.random() * WORDLIST.length); } while (b === a);
+  function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+  return cap(WORDLIST[a]) + cap(WORDLIST[b]);
+}
+
+function ensurePlayerName() {
+  if (playerNameInput.value.trim()) return;
+  var saved = (localStorage.getItem('spacerunner-player-name') || '').trim();
+  if (saved) {
+    playerNameInput.value = saved;
+  } else {
+    var name = generateRandomName();
+    playerNameInput.value = name;
+    localStorage.setItem('spacerunner-player-name', name);
+  }
+}
+
+playerNameInput.addEventListener('input', function() {
+  var val = playerNameInput.value.trim();
+  if (val) localStorage.setItem('spacerunner-player-name', val);
+  else localStorage.removeItem('spacerunner-player-name');
+});
+
 // ---- MENU ----
 function buildMenu() {
+  ensurePlayerName();
   var list = document.getElementById('level-list');
   list.innerHTML = '';
   var total = 0;
@@ -76,6 +139,7 @@ function showMenuImmediate() {
   document.getElementById('game-canvas').style.display = 'none';
   document.getElementById('hud').style.display = 'none';
   document.body.style.cursor = '';
+  hideCustomCursor();
   buildMenu();
 }
 
@@ -286,6 +350,8 @@ function startLevelImmediate(idx) {
   started = false;
   frozenKeys = null;
   glideLockedIn = false;
+  isGliding = false;
+  isSustaining = false;
   padSustain = false;
   airDrainFuel = false;
   airDrainOxy = false;
@@ -433,9 +499,23 @@ function gameLoop() {
   if (isPlayback) processPlaybackFrame();
 
   if (paused) {
+    stopContinuousSounds();
     renderer.render(scene, camera);
-    if (isPlayback) drawHud(0);
-    else drawPauseScreen();
+    if (isPlayback && playbackShowPause) {
+      drawHud(0);
+      // Overlay pause text on top of HUD
+      hudCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+      hudCtx.fillRect(0, 0, hudCanvas.width, hudCanvas.height);
+      hudCtx.textAlign = 'center';
+      hudCtx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+      hudCtx.font = 'bold 48px monospace';
+      hudCtx.fillText('PAUSED', hudCanvas.width / 2, hudCanvas.height / 2);
+      hudCtx.textAlign = 'left';
+    } else if (isPlayback) {
+      drawHud(0);
+    } else {
+      drawPauseScreen();
+    }
     return;
   }
 
@@ -534,19 +614,13 @@ function gameLoop() {
 }
 
 // ---- BOOT ----
-init3D();
-initHud();
-// Menu starts hidden (HTML has display:none), show it now behind the overlay
-showMenuImmediate();
-// Fade in loading text, then fade it out, then reveal menu
-(function() {
+window.bootGame = function() {
+  init3D();
+  initHud();
+  // Menu starts hidden (HTML has display:none), show it now behind the overlay
+  showMenuImmediate();
+  // Fade out loading text, then reveal menu
   var start = performance.now();
-  function fadeIn() {
-    var t = Math.min(1, (performance.now() - start) / FADE_LOADING_IN);
-    fadeLoadingEl.style.opacity = t;
-    if (t < 1) requestAnimationFrame(fadeIn);
-    else { start = performance.now(); requestAnimationFrame(fadeOut); }
-  }
   function fadeOut() {
     var t = Math.min(1, (performance.now() - start) / FADE_BOOT_OUT);
     fadeLoadingEl.style.opacity = 1 - t;
@@ -556,5 +630,5 @@ showMenuImmediate();
       fadeFromBlack(FADE_BOOT_IN);
     }
   }
-  requestAnimationFrame(fadeIn);
-})();
+  requestAnimationFrame(fadeOut);
+};

@@ -56,26 +56,37 @@ function zzfx(p,k,b,e,r,t,q,D,u,y,v,z,l,E,A,F,c,w,m,B,N) {
 
 // ---- SOUND DEFINITIONS ----
 var SFX = {
-  jump:       function() { zzfx(1,.05,400,.02,.01,.08,0,1,.5,0,0,0,0,0,0,0,0,1,0,.1); },
+  jump:       function() { zzfx(.8,.03,280,.02,.01,.1,1,1,.3,0,50,.02,0,0,0,0,0,1,0,.08); },
   bounce:     function() { zzfx(.6,.05,150,.01,.01,.05,0,1,0,0,0,0,0,0,0,0,0,1,0,.1); },
   bonk:       function() { zzfx(.8,.1,200,.01,.02,.1,2,1,-5,0,0,0,0,0,0,0,0,1,0,.1); },
   wallTap:    function() { zzfx(.5,.1,800,.005,.005,.03,2,1,0,0,0,0,0,0,0,0,0,1,0,.1); },
-  collide:    function() { zzfx(.8,.1,300,.01,.05,.15,3,1,-2,0,0,0,0,2,0,0,0,1,0,.1); },
-  explode:    function() { zzfx(1,.1,50,.01,.2,.5,4,1,0,0,-50,.05,.1,5,0,0,.1,1,0,0); },
+  collide:    function() {
+    zzfx(.8,.1,300,.01,.05,.15,3,1,-2,0,0,0,0,2,0,0,0,1,0,.1);
+    zzfx(.5,.02,250,.01,.05,.2,2,.8,-3,0,-20,.03,0,1,0,0,0,1,0,.06);
+    zzfx(.7,0,500,0,0,.03,4,1,0,0,0,0,0,0,0,0,0,1,0,0);
+  },
+  explode:    function() {
+    zzfx(1,.1,50,.01,.2,.5,4,1,0,0,-50,.05,.1,5,0,0,.1,1,0,0);
+    zzfx(.6,.02,120,.01,.15,.5,2,.9,-4,0,-40,.04,.08,3,0,0,.05,1,0,.04);
+    zzfx(.8,0,400,0,0,.04,4,1,0,0,0,0,0,0,0,0,0,1,0,0);
+  },
   fuelWarn:   function() { zzfx(.5,.05,600,.01,.05,.05,0,1,0,0,200,.1,.15,0,0,0,0,1,0,0); },
   oxyWarn:    function() { zzfx(.5,.05,900,.01,.05,.05,0,1,0,0,300,.1,.12,0,0,0,0,1,0,0); },
-  win:        function() { zzfx(1,.05,500,.02,.15,.3,0,1,.1,0,200,.1,.15,0,0,0,0,1,0,0); },
+  win:        function() {
+    zzfx(1,.05,500,.02,.15,.3,0,1,.1,0,200,.1,.15,0,0,0,0,1,0,0);
+    zzfx(.25,.05,250,.02,.15,.35,1,.7,.1,0,100,.1,.15,0,0,0,0,1,0,0);
+  },
   start:      function() { zzfx(.8,.05,100,.1,.15,.2,2,1,.3,.1,0,0,0,0,0,0,0,1,0,.1); },
   fuelPickup: function() { zzfx(.4,.05,300,.01,.03,.05,0,1,.1,0,0,0,0,0,0,0,0,1,0,0); },
   oxyPickup:  function() { zzfx(.4,.05,500,.01,.03,.05,0,1,.15,0,0,0,0,0,0,0,0,1,0,0); },
   jumpPad:    function() { zzfx(.8,.05,250,.01,.05,.15,0,1,1,0,0,0,0,0,0,0,0,1,0,.1); },
-  falling:    function() { zzfx(.3,.1,400,.01,.1,.15,1,1,-.8,0,0,0,0,0,0,0,0,1,0,0); },
+  falling:    function() { zzfx(.2,.06,300,.01,.12,.25,0,.7,-.3,0,-15,.04,0,0,0,0,0,1,0,.04); },
   drain:      function() { zzfx(.3,.1,100,.01,.05,.1,3,.5,0,0,0,0,0,0,0,0,0,1,0,.1); }
 };
 
 // ---- CONTINUOUS SOUND NODES ----
 // Each sound uses 2 detuned oscillators for chorus/texture
-var sndEngine = null, sndAccel = null, sndDecel = null;
+var sndEngine = null, sndAccel = null, sndDecel = null, sndSustain = null, sndGlide = null, sndBoost = null;
 
 function makeDistortionCurve(amount) {
   var n = 256, curve = new Float32Array(n);
@@ -136,8 +147,14 @@ function ensureContinuousSounds() {
   if (!sndEngine) return;
   // Accel: heavy distortion + fast LFO for raw, pressed throttle
   sndAccel = startContinuousSound(120, 'sawtooth', 'square', 10, 30, 22);
-  // Decel/brake: dual square, wide detune for harsh screechy friction
-  sndDecel = startContinuousSound(350, 'square', 'square', 18, 8, 0);
+  // Decel/brake: sawtooth + triangle, moderate distortion — mechanical friction
+  sndDecel = startContinuousSound(180, 'sawtooth', 'triangle', 15, 15, 14);
+  // Sustain (jump extend): airy hum above engine range — clean, pressurized
+  sndSustain = startContinuousSound(240, 'sine', 'triangle', 6, 5, 8);
+  // Glide: stressed whine above engine — harsher than sustain
+  sndGlide = startContinuousSound(200, 'triangle', 'square', 12, 18, 20);
+  // Boost: tense overtone when over max speed
+  sndBoost = startContinuousSound(260, 'triangle', 'square', 15, 15, 20);
 }
 
 function stopContinuousNode(snd) {
@@ -150,6 +167,9 @@ function stopContinuousSounds() {
   stopContinuousNode(sndEngine); sndEngine = null;
   stopContinuousNode(sndAccel); sndAccel = null;
   stopContinuousNode(sndDecel); sndDecel = null;
+  stopContinuousNode(sndSustain); sndSustain = null;
+  stopContinuousNode(sndGlide); sndGlide = null;
+  stopContinuousNode(sndBoost); sndBoost = null;
 }
 
 // ---- SOUND STATE ----
@@ -174,6 +194,9 @@ function updateSounds(dt) {
     if (sndEngine) sndEngine.gain.gain.value = 0;
     if (sndAccel) sndAccel.gain.gain.value = 0;
     if (sndDecel) sndDecel.gain.gain.value = 0;
+    if (sndSustain) sndSustain.gain.gain.value = 0;
+    if (sndGlide) sndGlide.gain.gain.value = 0;
+    if (sndBoost) sndBoost.gain.gain.value = 0;
     return;
   }
 
@@ -210,16 +233,56 @@ function updateSounds(dt) {
     }
   }
 
-  // Decel: brake screech — pitch and volume rise with speed
+  // Boost: tense scream when over max speed — pitch climbs with boost amount
+  if (sndBoost) {
+    if (playerSpeed > MAX_SPEED) {
+      var boostPct = (playerSpeed - MAX_SPEED) / (MAX_SPEED * BOOST_SPEED_PCT);
+      setSndFreq(sndBoost, 240 + boostPct * 120);
+      sndBoost.gain.gain.value = 0.012 + boostPct * 0.018;
+      if (sndBoost.lfoGain) sndBoost.lfoGain.gain.value = 0.005 + boostPct * 0.012;
+      if (sndBoost.lfo) sndBoost.lfo.frequency.value = 18 + boostPct * 8;
+    } else {
+      sndBoost.gain.gain.value = 0;
+      if (sndBoost.lfoGain) sndBoost.lfoGain.gain.value = 0;
+    }
+  }
+
+  // Decel: mechanical friction — pitch and volume rise with speed
   var decelHeld = (keys['ArrowDown'] || keys['KeyS']);
   if (sndDecel) {
     var brakePct = playerSpeed / MAX_SPEED;
     if (decelHeld && playerSpeed > 0) {
       var dVol = grounded ? 1.0 : 0.30;
-      setSndFreq(sndDecel, 300 + brakePct * 250);
-      sndDecel.gain.gain.value = (0.01 + brakePct * 0.025) * dVol;
+      setSndFreq(sndDecel, 140 + brakePct * 120);
+      sndDecel.gain.gain.value = (0.015 + brakePct * 0.025) * dVol;
+      if (sndDecel.lfoGain) sndDecel.lfoGain.gain.value = 0.008 + brakePct * 0.015;
     } else {
       sndDecel.gain.gain.value = 0;
+      if (sndDecel.lfoGain) sndDecel.lfoGain.gain.value = 0;
+    }
+  }
+
+  // Sustain (jump extend): airy pressurized hum, pitch rises with VY
+  if (sndSustain) {
+    if (isSustaining) {
+      setSndFreq(sndSustain, 220 + playerVY * 3);
+      sndSustain.gain.gain.value = 0.022;
+      if (sndSustain.lfoGain) sndSustain.lfoGain.gain.value = 0.006;
+    } else {
+      sndSustain.gain.gain.value = 0;
+      if (sndSustain.lfoGain) sndSustain.lfoGain.gain.value = 0;
+    }
+  }
+
+  // Glide: stressed whine, more aggressive than sustain
+  if (sndGlide) {
+    if (isGliding) {
+      setSndFreq(sndGlide, 210);
+      sndGlide.gain.gain.value = 0.03;
+      if (sndGlide.lfoGain) sndGlide.lfoGain.gain.value = 0.014;
+    } else {
+      sndGlide.gain.gain.value = 0;
+      if (sndGlide.lfoGain) sndGlide.lfoGain.gain.value = 0;
     }
   }
 
