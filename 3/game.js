@@ -115,7 +115,46 @@ function buildMenu() {
       btn.appendChild(scoreSpan);
     }
     btn.onclick = (function(idx) { return function() { startLevel(idx); }; })(i);
-    list.appendChild(btn);
+    var row = document.createElement('div');
+    row.className = 'level-row';
+    row.appendChild(btn);
+    // Add play/download buttons if a best-score recording exists
+    if (localStorage.getItem('spaceRunnerRec-' + i)) {
+      var recBtns = document.createElement('span');
+      recBtns.className = 'rec-btns';
+      var playBtn = document.createElement('span');
+      playBtn.className = 'rec-btn rec-play';
+      playBtn.title = 'Play best recording';
+      playBtn.onclick = (function(idx) { return function(e) {
+        var text = localStorage.getItem('spaceRunnerRec-' + idx);
+        if (!text) return;
+        var data = parseRecording(text);
+        if (data) startPlayback(data);
+      }; })(i);
+      var dlBtn = document.createElement('span');
+      dlBtn.className = 'rec-btn rec-dl';
+      dlBtn.title = 'Download best recording';
+      dlBtn.onclick = (function(idx) { return function(e) {
+        var text = localStorage.getItem('spaceRunnerRec-' + idx);
+        if (!text) return;
+        var blob = new Blob([text], { type: 'text/plain' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        var ts = (localStorage.getItem('spaceRunnerRecDate-' + idx) || new Date().toISOString()).replace(/[:.]/g, '-').slice(0, 19);
+        var name = LEVELS[idx].name.replace(/[^a-zA-Z0-9]/g, '_');
+        var player = (playerNameInput.value || 'Unknown').replace(/[^a-zA-Z0-9]/g, '_');
+        a.download = ts + '-' + name + '-' + player + '.run';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }; })(i);
+      recBtns.appendChild(playBtn);
+      recBtns.appendChild(dlBtn);
+      row.appendChild(recBtns);
+    }
+    list.appendChild(row);
   }
   var totalEl = document.getElementById('total-score');
   if (total > 0) {
@@ -292,6 +331,7 @@ window.addEventListener('keydown', function(e) {
     if (menuTypeBuffer.indexOf('deletealldata') !== -1) {
       localStorage.removeItem('spaceRunnerCleared');
       localStorage.removeItem('spaceRunnerScores');
+      for (var ri = 0; ri < LEVELS.length; ri++) { localStorage.removeItem('spaceRunnerRec-' + ri); localStorage.removeItem('spaceRunnerRecDate-' + ri); }
       clearedLevels = {};
       bestScores = {};
       menuTypeBuffer = '';
@@ -420,6 +460,20 @@ function calcAndSaveScore() {
   if (isNewBest) {
     bestScores[key] = score;
     localStorage.setItem('spaceRunnerScores', JSON.stringify(bestScores));
+  }
+  // Save recording if it beats the previous recording's score (or no recording exists)
+  var recKey = 'spaceRunnerRec-' + currentLevel;
+  var prevRec = localStorage.getItem(recKey);
+  var prevRecScore = 0;
+  if (prevRec) {
+    var m = prevRec.match(/\n(\d+) \$ (\d+)/);
+    if (m) prevRecScore = parseInt(m[2], 10);
+  }
+  if (score > prevRecScore) {
+    try {
+      localStorage.setItem(recKey, serializeRecording(currentLevel));
+      localStorage.setItem('spaceRunnerRecDate-' + currentLevel, new Date().toISOString());
+    } catch (e) { /* storage full — silently skip */ }
   }
 }
 
