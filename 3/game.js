@@ -1,3 +1,36 @@
+// ---- FADE SYSTEM ----
+var fadeOverlay = document.getElementById('fade-overlay');
+var fadeLoadingEl = document.getElementById('fade-loading');
+var fading = false;
+var fadeAnimId = null;
+
+function fadeToBlack(duration, callback) {
+  if (fadeAnimId) cancelAnimationFrame(fadeAnimId);
+  fading = true;
+  fadeOverlay.style.opacity = 0;
+  var start = performance.now();
+  function tick() {
+    var t = Math.min(1, (performance.now() - start) / duration);
+    fadeOverlay.style.opacity = t;
+    if (t < 1) { fadeAnimId = requestAnimationFrame(tick); }
+    else { fadeAnimId = null; if (callback) callback(); }
+  }
+  fadeAnimId = requestAnimationFrame(tick);
+}
+
+function fadeFromBlack(duration, callback) {
+  if (fadeAnimId) cancelAnimationFrame(fadeAnimId);
+  fadeOverlay.style.opacity = 1;
+  var start = performance.now();
+  function tick() {
+    var t = Math.min(1, (performance.now() - start) / duration);
+    fadeOverlay.style.opacity = 1 - t;
+    if (t < 1) { fadeAnimId = requestAnimationFrame(tick); }
+    else { fadeAnimId = null; fading = false; if (callback) callback(); }
+  }
+  fadeAnimId = requestAnimationFrame(tick);
+}
+
 // ---- MENU ----
 function buildMenu() {
   var list = document.getElementById('level-list');
@@ -30,8 +63,14 @@ function buildMenu() {
   }
 }
 
-function showMenu() {
+function showMenuImmediate() {
+  if (animId) cancelAnimationFrame(animId);
   stopRecording();
+  stopContinuousSounds();
+  clearAllRows();
+  clearAllParticles();
+  clearShipDebris();
+  disposeMergedChunks();
   state = 'menu';
   document.getElementById('menu').style.display = 'flex';
   document.getElementById('game-canvas').style.display = 'none';
@@ -40,10 +79,45 @@ function showMenu() {
   buildMenu();
 }
 
+function showMenu() {
+  if (fading) return;
+  fadeToBlack(FADE_TO_MENU_OUT, function() {
+    showMenuImmediate();
+    fadeFromBlack(FADE_TO_MENU_IN);
+  });
+}
+
 var menuTypeBuffer = '';
 window.addEventListener('keydown', function(e) {
-  // During playback, only ESC works
-  if (isPlayback && e.code !== 'Escape') return;
+  // During playback: up/down=speed, left/right=skip, space=pause, R=restart, ESC=exit
+  if (isPlayback) {
+    if (e.code === 'KeyR') {
+      restartPlayback();
+      return;
+    }
+    if (e.code === 'ArrowDown' || e.code === 'KeyS') {
+      playbackSpeed = Math.max(0.05, +(playbackSpeed - 0.05).toFixed(2));
+      return;
+    }
+    if (e.code === 'ArrowUp' || e.code === 'KeyW') {
+      playbackSpeed = Math.min(3.0, +(playbackSpeed + 0.05).toFixed(2));
+      return;
+    }
+    if (e.code === 'ArrowLeft' || e.code === 'KeyA') {
+      seekPlayback(playbackElapsed - 1000 * playbackSpeed);
+      return;
+    }
+    if (e.code === 'ArrowRight' || e.code === 'KeyD') {
+      seekPlayback(playbackElapsed + 1000 * playbackSpeed);
+      return;
+    }
+    if (e.code === 'Space' && !e.repeat) {
+      paused = !paused;
+      if (paused) stopContinuousSounds();
+      return;
+    }
+    if (e.code !== 'Escape') return;
+  }
   if (e.code === 'KeyQ' && !e.repeat) {
     fpsShowHistogram = !fpsShowHistogram;
   }
@@ -55,18 +129,10 @@ window.addEventListener('keydown', function(e) {
     if (isRecording) { if (paused) recordPause(); else recordResume(); }
   }
   if (e.code === 'KeyR' && state !== 'menu') {
-    cancelAnimationFrame(animId);
-    clearAllRows();
-    clearAllParticles();
-    startLevel(currentLevel);
+    restartLevel();
   }
   if (e.code === 'Escape' && state !== 'menu') {
     if (isPlayback) { stopPlayback(); return; }
-    cancelAnimationFrame(animId);
-    stopContinuousSounds();
-    clearAllRows();
-    clearAllParticles();
-    clearShipDebris();
     showMenu();
   }
   // Download recording on X key after death/win
@@ -93,7 +159,11 @@ window.addEventListener('keydown', function(e) {
       state = 'playing';
       screenFade = 0;
       deathDitherUniform.value = 0;
+      shipDitherUniform.value = 0;
       deathTimer = 0;
+      deathStoppedTimer = 0;
+      deathFade = 0;
+      frozenDist = -1;
       playerX = safeX;
       playerY = safeY + 0.1;
       playerZ = safeZ;
@@ -119,7 +189,6 @@ window.addEventListener('keydown', function(e) {
       if (debugInspect) {
         // Hide cosmetics
         if (starField) starField.visible = false;
-        if (planetMesh) planetMesh.visible = false;
         scene.background = new THREE.Color(0x331133);
         scene.fog = null;
         // Add big pink ground plane
@@ -132,7 +201,6 @@ window.addEventListener('keydown', function(e) {
       } else {
         // Restore cosmetics
         if (starField) starField.visible = true;
-        if (planetMesh) planetMesh.visible = true;
         scene.background = new THREE.Color(0x000011);
         scene.fog = new THREE.Fog(0x000011, VIEW_DISTANCE - FOG_START, VIEW_DISTANCE);
         if (debugPlane) { scene.remove(debugPlane); debugPlane = null; }
@@ -170,7 +238,7 @@ window.addEventListener('keydown', function(e) {
 });
 
 // ---- LEVEL LOADING ----
-function startLevel(idx) {
+function startLevelImmediate(idx) {
   currentLevel = idx;
   state = 'playing';
   paused = false;
@@ -202,7 +270,19 @@ function startLevel(idx) {
   score = 0;
   screenFade = 0;
   deathDitherUniform.value = 0;
+  shipDitherUniform.value = 0;
+  flameLifeScale = 1;
+  winStarSpeed = 1;
+  if (accelFlame) { accelFlame.points.material.opacity = 0.9; accelFlame.points.material.size = 0.55; }
+  if (oxyAccelFlame) { oxyAccelFlame.points.material.opacity = 0.9; oxyAccelFlame.points.material.size = 0.55; }
+  if (cruiseFlame) { cruiseFlame.points.material.opacity = 0.65; cruiseFlame.points.material.size = 0.4; }
+  if (sustainFlame) { sustainFlame.points.material.opacity = 0.7; sustainFlame.points.material.size = 0.3; }
+  if (glideFlame) { glideFlame.points.material.opacity = 0.8; glideFlame.points.material.size = 0.45; }
   deathTimer = 0;
+  deathStoppedTimer = 0;
+  deathFade = 0;
+  frozenDist = -1;
+  wonTime = 0;
   started = false;
   frozenKeys = null;
   glideLockedIn = false;
@@ -212,21 +292,39 @@ function startLevel(idx) {
   lastRecRow = -1;
 
   if (animId) cancelAnimationFrame(animId);
+  stopContinuousSounds();
   clearAllRows();
   initMergedChunks(idx);
   clearAllParticles();
   clearShipDebris();
   resetSoundState();
   shipMesh.visible = true;
+  lastStarZ = 0;
   levelStartTime = performance.now();
   document.getElementById('menu').style.display = 'none';
   document.getElementById('game-canvas').style.display = 'block';
   document.getElementById('hud').style.display = 'block';
-  document.body.style.cursor = 'none';
+  if (!isPlayback) document.body.style.cursor = 'none';
 
   if (!isPlayback) startRecording();
   clock.getDelta(); // reset clock
   gameLoop();
+}
+
+function startLevel(idx) {
+  if (fading) return;
+  fadeToBlack(FADE_START_LEVEL_OUT, function() {
+    startLevelImmediate(idx);
+    fadeFromBlack(FADE_START_LEVEL_IN);
+  });
+}
+
+function restartLevel() {
+  if (fading) return;
+  fadeToBlack(FADE_RESTART_OUT, function() {
+    startLevelImmediate(currentLevel);
+    fadeFromBlack(FADE_RESTART_IN);
+  });
 }
 
 var scoreDist = 0;
@@ -235,7 +333,7 @@ var scoreFuelMult = 1;
 var scoreOxyMult = 1;
 
 function calcAndSaveScore() {
-  scoreDist = Math.floor(Math.abs(playerZ));
+  scoreDist = Math.floor(frozenDist >= 0 ? frozenDist : Math.abs(playerZ));
   var won = (state === 'won' || state === 'winning');
   if (won) {
     var timeRemainPct = levelTimerMax > 0 ? levelTimer / levelTimerMax : 0;
@@ -322,6 +420,7 @@ function gameLoop() {
 
   animId = requestAnimationFrame(gameLoop);
   var dt = Math.min(clock.getDelta(), 0.05);
+  if (isPlayback) dt *= playbackSpeed;
 
   // Smooth curvature toggle
   var cv = pathCurveUniform.value;
@@ -333,7 +432,12 @@ function gameLoop() {
 
   if (isPlayback) processPlaybackFrame();
 
-  if (paused) { renderer.render(scene, camera); drawPauseScreen(); return; }
+  if (paused) {
+    renderer.render(scene, camera);
+    if (isPlayback) drawHud(0);
+    else drawPauseScreen();
+    return;
+  }
 
   if (state === 'playing') {
     if (started) levelTimer = Math.max(0, levelTimer - dt);
@@ -343,9 +447,9 @@ function gameLoop() {
     updateShadow();
     updateChunks();
     updateEngineTrail(dt);
-    updateSpeedLines(dt);
     updateSparks(dt);
     updateDust(dt);
+    updateStars(dt);
   } else if (state === 'dead') {
     deathSpeed = Math.max(0, deathSpeed - DECEL_RATE * 0.5 * dt);
     playerZ -= deathSpeed * dt;
@@ -354,17 +458,43 @@ function gameLoop() {
     updateChunks();
     screenFade = Math.min(0.15, screenFade + dt * 0.2);
     deathTimer += dt;
-    if (deathTimer > DEATH_DITHER_DELAY) deathDitherUniform.value = Math.min(1, (deathTimer - DEATH_DITHER_DELAY) / DEATH_DITHER_DURATION);
+    var deathFadeDelay = (deathReason === 'crash' || deathReason === 'kill') ? 0.25 : 0;
+    var deathFadeElapsed = deathTimer - deathFadeDelay;
+    deathFade = deathFadeElapsed > 0 ? Math.min(1, deathFadeElapsed / 0.25) : 0;
+    if (deathSpeed < 2) deathStoppedTimer += dt;
+    if (deathStoppedTimer > DEATH_DITHER_DELAY) deathDitherUniform.value = Math.min(1, (deathStoppedTimer - DEATH_DITHER_DELAY) / DEATH_DITHER_DURATION);
+    // Dither out ship/debris after level dither completes
+    if (deathDitherUniform.value >= 1) {
+      var shipDitherStart = DEATH_DITHER_DELAY + DEATH_DITHER_DURATION;
+      var shipT = (deathStoppedTimer - shipDitherStart) / SHIP_DITHER_DURATION;
+      shipDitherUniform.value = Math.min(1, Math.max(0, shipT));
+    }
     updateExplosion(dt);
     updateShipDebris(dt);
+    updateEngineTrail(dt);
     updateSparks(dt);
     updateDust(dt);
+    updateStars(dt);
   } else if (state === 'winning' || state === 'won') {
     screenFade = Math.min(0.125, screenFade + dt * 0.075);
     if (state === 'winning') winTimer -= dt;
     playerSpeed = Math.min(MAX_SPEED, playerSpeed + ACCEL_RATE * dt);
-    playerY += 3 * dt;
+    var winLift = 0.375;
+    if (keys['Space'] || keys['KeySpace']) {
+      winLiftBoost = Math.min(winLift, (winLiftBoost || 0) + winLift * dt);
+    } else {
+      winLiftBoost = Math.max(0, (winLiftBoost || 0) - winLift * dt);
+    }
+    playerY += (winLift + winLiftBoost) * dt;
     playerZ -= playerSpeed * dt;
+    // Ship pulls forward when holding accel
+    var winAccel = 3;
+    if (keys['ArrowUp'] || keys['KeyW']) {
+      winShipVZ += winAccel * dt;
+    } else {
+      winShipVZ = Math.max(0, winShipVZ - winAccel * 0.5 * dt);
+    }
+    winShipZ -= winShipVZ * dt;
     grounded = false;
     // Allow steering unless out of fuel/oxygen
     if (fuel > 0 && oxygen > 0) {
@@ -374,15 +504,28 @@ function gameLoop() {
     }
     playerVX *= Math.max(0, 1 - 2 * dt);
     playerX += playerVX * dt;
+    var winElapsedTotal = (2.0 - winTimer) + wonTime;
+    if (winElapsedTotal > 5) {
+      shipDitherUniform.value = Math.min(1, shipDitherUniform.value + dt / (SHIP_DITHER_DURATION * 5));
+      var flameFade = 1 - shipDitherUniform.value;
+      flameLifeScale = 1 + shipDitherUniform.value * 3;
+      if (accelFlame) { accelFlame.points.material.opacity = 0.9 * flameFade; accelFlame.points.material.size = 0.55 * flameFade; }
+      if (oxyAccelFlame) { oxyAccelFlame.points.material.opacity = 0.9 * flameFade; oxyAccelFlame.points.material.size = 0.55 * flameFade; }
+      if (cruiseFlame) { cruiseFlame.points.material.opacity = 0.65 * flameFade; cruiseFlame.points.material.size = 0.4 * flameFade; }
+      if (sustainFlame) { sustainFlame.points.material.opacity = 0.7 * flameFade; sustainFlame.points.material.size = 0.3 * flameFade; }
+      if (glideFlame) { glideFlame.points.material.opacity = 0.8 * flameFade; glideFlame.points.material.size = 0.45 * flameFade; }
+    }
     updateCamera();
     updateChunks();
     updateEngineTrail(dt);
-    updateSpeedLines(dt);
+    updateStars(dt);
     if (state === 'winning' && winTimer <= 0) {
       state = 'won';
+      wonTime = 0;
       calcAndSaveScore();
-      if (isRecording) recordScore();
+      if (isRecording) { recordScore(); stopRecording(); }
     }
+    if (state === 'won') wonTime += dt;
   }
 
   updateDebugWireframe();
@@ -393,4 +536,25 @@ function gameLoop() {
 // ---- BOOT ----
 init3D();
 initHud();
-showMenu();
+// Menu starts hidden (HTML has display:none), show it now behind the overlay
+showMenuImmediate();
+// Fade in loading text, then fade it out, then reveal menu
+(function() {
+  var start = performance.now();
+  function fadeIn() {
+    var t = Math.min(1, (performance.now() - start) / FADE_LOADING_IN);
+    fadeLoadingEl.style.opacity = t;
+    if (t < 1) requestAnimationFrame(fadeIn);
+    else { start = performance.now(); requestAnimationFrame(fadeOut); }
+  }
+  function fadeOut() {
+    var t = Math.min(1, (performance.now() - start) / FADE_BOOT_OUT);
+    fadeLoadingEl.style.opacity = 1 - t;
+    if (t < 1) requestAnimationFrame(fadeOut);
+    else {
+      fadeLoadingEl.style.display = 'none';
+      fadeFromBlack(FADE_BOOT_IN);
+    }
+  }
+  requestAnimationFrame(fadeIn);
+})();

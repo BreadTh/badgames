@@ -8,12 +8,18 @@ var recKeyState = {}; // logical key refcounts
 
 var playbackEvents = [];
 var playbackIdx = 0;
-var playbackStartTime = 0;
 var playbackLevel = 0;
 var playbackRows = null;
 var savedLevelRows = null;
 var playbackDebug = false;
 var recDebugWasOn = false;
+var playbackSpeed = 1.0;
+var playbackElapsed = 0;
+var playbackLastRealTime = 0;
+var playbackTotalMs = 0;
+var playbackDragging = false;
+var playbackWasPlaying = false;
+var playbackMarkers = []; // {ms, type} - jump, fuel, oxy, fueloxy, death, win
 
 // Map physical keys to logical codes
 var REC_KEY_MAP = {
@@ -88,7 +94,7 @@ function recKeyUp(code) {
 }
 
 function recordSync(x, y, z, spd, vy, vx) {
-  recordEvent('S ' + x.toFixed(2) + ' ' + y.toFixed(2) + ' ' + z.toFixed(2) + ' ' + spd.toFixed(2) + ' ' + vy.toFixed(2) + ' ' + vx.toFixed(2));
+  recordEvent('S ' + x.toFixed(2) + ' ' + y.toFixed(2) + ' ' + z.toFixed(2) + ' ' + spd.toFixed(2) + ' ' + vy.toFixed(2) + ' ' + vx.toFixed(2) + ' ' + levelTimer.toFixed(2) + ' ' + oxygen.toFixed(1) + ' ' + fuel.toFixed(1));
 }
 
 function recordDeath(reason) {
@@ -322,6 +328,44 @@ function parseRecording(text) {
 
 // ---- PLAYBACK ----
 
+function buildPlaybackMarkers(events) {
+  var markers = [];
+  var prevOxy = -1, prevFuel = -1;
+  for (var i = 0; i < events.length; i++) {
+    var evt = events[i].evt;
+    var ms = events[i].ms;
+    if (evt === '+J') {
+      markers.push({ ms: ms, type: 'jump' });
+    } else if (evt === 'BF') {
+      markers.push({ ms: ms, type: 'bonkfront' });
+    } else if (evt === 'BH') {
+      markers.push({ ms: ms, type: 'bonkhead' });
+    } else if (evt === 'BS') {
+      markers.push({ ms: ms, type: 'bonkside' });
+    } else if (evt.charAt(0) === 'D') {
+      markers.push({ ms: ms, type: 'death' });
+    } else if (evt === 'W') {
+      markers.push({ ms: ms, type: 'win' });
+    } else if (evt.charAt(0) === 'S') {
+      var parts = evt.split(' ');
+      if (parts.length >= 10) {
+        var oxy = parseFloat(parts[8]);
+        var fl = parseFloat(parts[9]);
+        if (prevOxy >= 0 && prevFuel >= 0) {
+          var gotOxy = oxy > prevOxy + 1;
+          var gotFuel = fl > prevFuel + 1;
+          if (gotOxy && gotFuel) markers.push({ ms: ms, type: 'fueloxy' });
+          else if (gotOxy) markers.push({ ms: ms, type: 'oxy' });
+          else if (gotFuel) markers.push({ ms: ms, type: 'fuel' });
+        }
+        prevOxy = oxy;
+        prevFuel = fl;
+      }
+    }
+  }
+  return markers;
+}
+
 function startPlayback(data) {
   playbackLevel = data.level;
   playbackEvents = data.events;
@@ -334,14 +378,33 @@ function startPlayback(data) {
   LEVELS[data.level].rows = data.rows;
 
   isPlayback = true;
-  // 1 second of looking at the start line before events play
-  playbackStartTime = performance.now() + 1000;
+  playbackSpeed = 1.0;
+  playbackElapsed = -1000; // 1 second lead-in before events play
+  playbackLastRealTime = performance.now();
+  // Find the death/win event as the end point, or fall back to last event
+  playbackTotalMs = 0;
+  for (var ei = data.events.length - 1; ei >= 0; ei--) {
+    var evt = data.events[ei].evt;
+    if (evt.charAt(0) === 'D' || evt === 'W') {
+      playbackTotalMs = data.events[ei].ms;
+      break;
+    }
+  }
+  if (playbackTotalMs === 0 && data.events.length > 0) {
+    playbackTotalMs = data.events[data.events.length - 1].ms;
+  }
+  playbackDragging = false;
+  playbackMarkers = buildPlaybackMarkers(data.events);
   startLevel(data.level);
 }
 
 function processPlaybackFrame() {
   if (!isPlayback) return;
-  var elapsed = performance.now() - playbackStartTime;
+  var realNow = performance.now();
+  var realDt = realNow - playbackLastRealTime;
+  playbackLastRealTime = realNow;
+  if (!paused) playbackElapsed += realDt * playbackSpeed;
+  var elapsed = playbackElapsed;
 
   // Process all events up to current time
   while (playbackIdx < playbackEvents.length && playbackEvents[playbackIdx].ms <= elapsed) {
@@ -369,6 +432,9 @@ function processPlaybackFrame() {
         playerSpeed = parseFloat(parts[4]);
         if (parts.length >= 6) playerVY = parseFloat(parts[5]);
         if (parts.length >= 7) playerVX = parseFloat(parts[6]);
+        if (parts.length >= 8) levelTimer = parseFloat(parts[7]);
+        if (parts.length >= 9) oxygen = parseFloat(parts[8]);
+        if (parts.length >= 10) fuel = parseFloat(parts[9]);
       }
     } else if (evt.charAt(0) === 'D') {
       // Death event — replay the death
@@ -392,14 +458,87 @@ function processPlaybackFrame() {
     playbackIdx++;
   }
 
-  // Auto-stop 3 seconds after last event (only if no death/win screen showing)
-  if (playbackIdx >= playbackEvents.length && playbackEvents.length > 0 &&
-      state === 'playing') {
-    var lastMs = playbackEvents[playbackEvents.length - 1].ms;
-    if (elapsed > lastMs + 3000) {
-      stopPlayback();
+}
+
+function seekPlayback(targetMs) {
+  if (!isPlayback) return;
+  targetMs = Math.max(0, Math.min(targetMs, playbackTotalMs));
+  keys = {};
+  playbackIdx = 0;
+  playbackElapsed = targetMs;
+  playbackLastRealTime = performance.now();
+
+  // Reset death/win state
+  state = 'playing';
+  alive = true;
+  screenFade = 0;
+  deathTimer = 0;
+  deathStoppedTimer = 0;
+  deathFade = 0;
+  frozenDist = -1;
+  wonTime = 0;
+  deathDitherUniform.value = 0;
+  shipDitherUniform.value = 0;
+  flameLifeScale = 1;
+  winStarSpeed = 1;
+  shipMesh.visible = true;
+  clearShipDebris();
+
+  // Process all events up to targetMs to restore correct key state + sync
+  while (playbackIdx < playbackEvents.length && playbackEvents[playbackIdx].ms <= targetMs) {
+    var evt = playbackEvents[playbackIdx].evt;
+    if (evt.charAt(0) === '+' || evt.charAt(0) === '-') {
+      var press = evt.charAt(0) === '+';
+      var logical = evt.substring(1);
+      var physKeys = PLAYBACK_KEY_MAP[logical];
+      if (physKeys) {
+        for (var i = 0; i < physKeys.length; i++) {
+          keys[physKeys[i]] = press;
+        }
+      }
+    } else if (evt.charAt(0) === 'S') {
+      var parts = evt.split(' ');
+      if (parts.length >= 5) {
+        playerX = parseFloat(parts[1]);
+        playerY = parseFloat(parts[2]);
+        playerZ = parseFloat(parts[3]);
+        playerSpeed = parseFloat(parts[4]);
+        if (parts.length >= 6) playerVY = parseFloat(parts[5]);
+        if (parts.length >= 7) playerVX = parseFloat(parts[6]);
+        if (parts.length >= 8) levelTimer = parseFloat(parts[7]);
+        if (parts.length >= 9) oxygen = parseFloat(parts[8]);
+        if (parts.length >= 10) fuel = parseFloat(parts[9]);
+      }
+    } else if (evt.charAt(0) === 'D') {
+      var reason = evt.substring(2) || 'kill';
+      die(reason);
+    } else if (evt === 'W') {
+      win();
     }
+    playbackIdx++;
   }
+
+  // Update visuals to reflect new position
+  updateCamera();
+  updateChunks();
+  updateShadow();
+  updateEngineTrail(10); // large dt to expire old particles at old position
+  updateEngineTrail(0);  // spawn fresh at new ship position
+  renderer.render(scene, camera);
+  drawHud(0);
+}
+
+function restartPlayback() {
+  if (!isPlayback || fading) return;
+  fadeToBlack(FADE_RESTART_OUT, function() {
+    stopContinuousSounds();
+    playbackIdx = 0;
+    playbackElapsed = -1000;
+    playbackLastRealTime = performance.now();
+    keys = {};
+    startLevelImmediate(currentLevel);
+    fadeFromBlack(FADE_RESTART_IN);
+  });
 }
 
 function stopPlayback() {
@@ -410,14 +549,10 @@ function stopPlayback() {
     savedLevelRows = null;
   }
   isPlayback = false;
+  playbackDragging = false;
   keys = {};
   playbackEvents = [];
   playbackIdx = 0;
-  cancelAnimationFrame(animId);
-  stopContinuousSounds();
-  clearAllRows();
-  clearAllParticles();
-  clearShipDebris();
   showMenu();
 }
 
@@ -452,5 +587,76 @@ function stopPlayback() {
     reader.readAsText(file);
     // Reset so same file can be loaded again
     fileInput.value = '';
+  });
+})();
+
+// ---- PLAYBACK BAR MOUSE INTERACTION ----
+(function() {
+  function getCanvasCoords(e) {
+    var c = document.getElementById('hud-canvas');
+    if (!c) return null;
+    var rect = c.getBoundingClientRect();
+    return {
+      x: (e.clientX - rect.left) * (c.width / rect.width),
+      y: (e.clientY - rect.top) * (c.height / rect.height)
+    };
+  }
+
+  function scrubToX(x) {
+    if (pbScrubW <= 0 || playbackTotalMs <= 0) return;
+    var pct = Math.max(0, Math.min(1, (x - pbScrubX) / pbScrubW));
+    seekPlayback(pct * playbackTotalMs);
+  }
+
+  function hitTest(x, y) {
+    if (x >= pbScrubX && x <= pbScrubX + pbScrubW &&
+        y >= pbScrubY && y <= pbScrubY + pbScrubH) return 'scrub';
+    if (x >= pbPlayBtnX && x <= pbPlayBtnX + pbPlayBtnW &&
+        y >= pbBarY && y <= pbBarY + pbBarH) return 'playpause';
+    if (x >= pbSlowBtnX && x <= pbSlowBtnX + pbSlowBtnW &&
+        y >= pbBarY && y <= pbBarY + pbBarH) return 'slow';
+    if (x >= pbFastBtnX && x <= pbFastBtnX + pbFastBtnW &&
+        y >= pbBarY && y <= pbBarY + pbBarH) return 'fast';
+    return null;
+  }
+
+  window.addEventListener('mousedown', function(e) {
+    if (!isPlayback) return;
+    var pos = getCanvasCoords(e);
+    if (!pos) return;
+    var hit = hitTest(pos.x, pos.y);
+    if (hit === 'scrub') {
+      playbackDragging = true;
+      playbackWasPlaying = !paused;
+      paused = true;
+      stopContinuousSounds();
+      scrubToX(pos.x);
+    } else if (hit === 'playpause') {
+      paused = !paused;
+      if (paused) stopContinuousSounds();
+    } else if (hit === 'slow') {
+      playbackSpeed = Math.max(0.05, +(playbackSpeed - 0.05).toFixed(2));
+    } else if (hit === 'fast') {
+      playbackSpeed = Math.min(3.0, +(playbackSpeed + 0.05).toFixed(2));
+    }
+  });
+
+  window.addEventListener('mousemove', function(e) {
+    if (!isPlayback) return;
+    var pos = getCanvasCoords(e);
+    if (!pos) return;
+    if (playbackDragging) {
+      scrubToX(pos.x);
+      return;
+    }
+    // Cursor hint
+    var hit = hitTest(pos.x, pos.y);
+    document.body.style.cursor = hit ? 'pointer' : '';
+  });
+
+  window.addEventListener('mouseup', function() {
+    if (!playbackDragging) return;
+    playbackDragging = false;
+    if (playbackWasPlaying) paused = false;
   });
 })();

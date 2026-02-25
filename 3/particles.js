@@ -64,9 +64,20 @@ function createExplosion(x, y, z) {
     pos[i3+2] = z + (Math.random() - 0.5) * 0.3;
     var sideSpeed = 3 + Math.random() * 8;
     var angle = Math.random() * Math.PI * 2;
-    explosionVelocities[i3] = Math.cos(angle) * sideSpeed;
-    explosionVelocities[i3+1] = Math.abs(Math.sin(angle)) * sideSpeed * 0.5 + Math.random() * 3;
-    explosionVelocities[i3+2] = -deathSpeed * 0.7 + (Math.random() - 0.3) * sideSpeed;
+    var bloomMag = Math.abs(Math.sin(angle)) * sideSpeed * 0.5 + Math.random() * 3;
+    var spread1 = Math.cos(angle) * sideSpeed;
+    var spread2 = (Math.random() - 0.3) * sideSpeed;
+    var bvx, bvy, bvz;
+    if (Math.abs(deathBloomY) > 0.5) {
+      bvx = spread1; bvy = bloomMag * deathBloomY; bvz = spread2;
+    } else if (Math.abs(deathBloomX) > 0.5) {
+      bvx = bloomMag * deathBloomX; bvy = spread1; bvz = spread2;
+    } else {
+      bvx = spread1; bvy = spread2; bvz = bloomMag * deathBloomZ;
+    }
+    explosionVelocities[i3] = deathVX + bvx;
+    explosionVelocities[i3+1] = deathVY + bvy;
+    explosionVelocities[i3+2] = deathVZ + bvz;
     // Fire color per particle
     var t = Math.random();
     if (t < 0.3) { col[i3] = 1; col[i3+1] = 0.9; col[i3+2] = 0.5; }      // bright yellow
@@ -91,9 +102,20 @@ function createExplosion(x, y, z) {
     var dSideSpeed = 3 + Math.random() * 6;
     var dAngle = Math.random() * Math.PI * 2;
     var d3 = d * 3;
-    debrisVelocities[d3] = Math.cos(dAngle) * dSideSpeed;
-    debrisVelocities[d3+1] = Math.abs(Math.sin(dAngle)) * dSideSpeed * 0.5 + Math.random() * 3;
-    debrisVelocities[d3+2] = -deathSpeed * 0.7 + (Math.random() - 0.3) * dSideSpeed;
+    var dBloom = Math.abs(Math.sin(dAngle)) * dSideSpeed * 0.5 + Math.random() * 3;
+    var dSpread1 = Math.cos(dAngle) * dSideSpeed;
+    var dSpread2 = (Math.random() - 0.3) * dSideSpeed;
+    var dbvx, dbvy, dbvz;
+    if (Math.abs(deathBloomY) > 0.5) {
+      dbvx = dSpread1; dbvy = dBloom * deathBloomY; dbvz = dSpread2;
+    } else if (Math.abs(deathBloomX) > 0.5) {
+      dbvx = dBloom * deathBloomX; dbvy = dSpread1; dbvz = dSpread2;
+    } else {
+      dbvx = dSpread1; dbvy = dSpread2; dbvz = dBloom * deathBloomZ;
+    }
+    debrisVelocities[d3] = deathVX + dbvx;
+    debrisVelocities[d3+1] = deathVY + dbvy;
+    debrisVelocities[d3+2] = deathVZ + dbvz;
     debrisSpins[d3] = (Math.random() - 0.5) * 15;
     debrisSpins[d3+1] = (Math.random() - 0.5) * 15;
     debrisSpins[d3+2] = (Math.random() - 0.5) * 15;
@@ -207,49 +229,7 @@ function updateSparks(dt) {
   sparkParticles.material.opacity = 0.9;
 }
 
-// ---- SPEED LINES ----
-var speedLineCount = 30;
-var speedLines = null;
-var speedLineData = [];
 
-function initSpeedLines() {
-  var geo = new THREE.BufferGeometry();
-  var positions = new Float32Array(speedLineCount * 6);
-  for (var i = 0; i < speedLineCount; i++) {
-    var idx = i * 6;
-    positions[idx] = positions[idx + 3] = (Math.random() - 0.5) * 20;
-    positions[idx + 1] = positions[idx + 4] = Math.random() * 6 + 1;
-    positions[idx + 2] = 0;
-    positions[idx + 5] = -1;
-    speedLineData.push({ life: Math.random() });
-  }
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  var mat = new THREE.LineBasicMaterial({ color: 0x4488cc, transparent: true, opacity: 0.3 });
-  speedLines = new THREE.LineSegments(geo, mat);
-  scene.add(speedLines);
-}
-
-function updateSpeedLines(dt) {
-  if (!speedLines) return;
-  var pos = speedLines.geometry.attributes.position.array;
-  var speedFactor = playerSpeed / MAX_SPEED;
-  speedLines.material.opacity = speedFactor * 0.5;
-
-  for (var i = 0; i < speedLineCount; i++) {
-    var d = speedLineData[i];
-    d.life += dt * 2;
-    if (d.life > 1) {
-      d.life = 0;
-      var idx = i * 6;
-      var x = (Math.random() - 0.5) * 16;
-      var y = Math.random() * 5 + 1;
-      var z = playerZ - 15 - Math.random() * 30;
-      pos[idx] = x; pos[idx + 1] = y; pos[idx + 2] = z;
-      pos[idx + 3] = x; pos[idx + 4] = y; pos[idx + 5] = z - 1 - speedFactor * 3;
-    }
-  }
-  speedLines.geometry.attributes.position.needsUpdate = true;
-}
 
 // ---- ENGINE FLAME PARTICLES (two pools: accel + cruise) ----
 var accelFlame = null, cruiseFlame = null, oxyAccelFlame = null;
@@ -376,11 +356,13 @@ function _spawnFlame(pool, count, spread, speed, lifeRate, nX, nY, nZ, backDir, 
   }
 }
 
+var flameLifeScale = 1; // >1 = particles die faster (shorter trails)
+
 function _updateFlamePool(pool, dt) {
   var pos = pool.points.geometry.attributes.position.array;
   var col = pool.points.geometry.attributes.color.array;
   for (var i = 0; i < pool.count; i++) {
-    pool.ages[i] += dt * pool.lifeRates[i];
+    pool.ages[i] += dt * pool.lifeRates[i] * flameLifeScale;
     var i3 = i * 3;
     if (pool.ages[i] < 1) {
       pos[i3] += pool.velocities[i3] * dt;
@@ -402,7 +384,21 @@ function _updateFlamePool(pool, dt) {
 
 var prevNozzle = null, prevTipL = null, prevTipR = null;
 function updateEngineTrail(dt) {
-  if (!accelFlame || !alive) return;
+  if (!accelFlame) return;
+
+  // Always update existing particles (so they fade out after death)
+  _updateFlamePool(accelFlame, dt);
+  _updateFlamePool(oxyAccelFlame, dt);
+  _updateFlamePool(cruiseFlame, dt);
+  _updateFlamePool(sustainFlame, dt);
+  _updateFlamePool(glideFlame, dt);
+  _updateFlamePool(jumpSparkPool, dt);
+
+  if (!alive) {
+    accelFlameLight.intensity = 0;
+    cruiseFlameLight.intensity = 0;
+    return;
+  }
 
   var speedPct = playerSpeed / MAX_SPEED;
   var inp = (oxygen <= 0 && frozenKeys) ? frozenKeys : keys;
@@ -431,15 +427,6 @@ function updateEngineTrail(dt) {
   var tX = nX + backWorld.x * 5;
   var tY = nY + backWorld.y * 5;
   var tZ = nZ + backWorld.z * 5;
-
-  // Update existing particles BEFORE spawning new ones,
-  // so freshly spawned particles don't get displaced on their birth frame
-  _updateFlamePool(accelFlame, dt);
-  _updateFlamePool(oxyAccelFlame, dt);
-  _updateFlamePool(cruiseFlame, dt);
-  _updateFlamePool(sustainFlame, dt);
-  _updateFlamePool(glideFlame, dt);
-  _updateFlamePool(jumpSparkPool, dt);
 
   var hasProp = fuel > 0 || oxygen > 0;
   if (accelHeld && fuel > 0 && oxygen > 0 && !brakeHeld) {
@@ -558,11 +545,6 @@ function clearAllParticles() {
     var sp = sparkParticles.geometry.attributes.position.array;
     for (var i = 0; i < SPARK_COUNT; i++) { sp[i * 3 + 1] = -100; sparkAges[i] = 1; }
     sparkParticles.geometry.attributes.position.needsUpdate = true;
-  }
-  // Speed lines
-  if (speedLines) {
-    speedLines.material.opacity = 0;
-    for (var i = 0; i < speedLineCount; i++) speedLineData[i].life = 1;
   }
   // Flames
   prevNozzle = null; prevTipL = null; prevTipR = null;

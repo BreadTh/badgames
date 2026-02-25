@@ -5,7 +5,8 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div id="menu">
+<div id="fade-overlay"><span id="fade-loading">LOADING...</span></div>
+<div id="menu" style="display:none">
   <h1>SPACE RUNNER</h1>
   <div class="subtitle">select a level</div>
   <div id="total-score"></div>
@@ -17,24 +18,25 @@
 <div id="hud">
   <canvas id="hud-canvas"></canvas>
 </div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="levels.js"></script>
-<script src="level1.js"></script>
-<script src="level2.js"></script>
-<script src="level3.js"></script>
-<script src="level4.js"></script>
-<script src="level5.js"></script>
-<script src="level6.js"></script>
-<script src="level7.js"></script>
-<script src="sounds.js"></script>
-<script src="constants.js"></script>
-<script src="chunks.js"></script>
-<script src="ship.js"></script>
-<script src="particles.js"></script>
-<script src="hud.js"></script>
-<script src="player.js"></script>
-<script src="scene.js"></script>
-<script src="recording.js"></script>
-<script src="game.js"></script>
+<script>
+// Let the browser paint the loading screen, then load game scripts
+requestAnimationFrame(function() { requestAnimationFrame(function() {
+  var scripts = [
+    'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js',
+    'levels.js','level1.js','level2.js','level3.js','level4.js','level5.js','level6.js','level7.js',
+    'sounds.js','constants.js','chunks.js','ship.js','particles.js','hud.js','player.js',
+    'scene.js','recording.js','game.js'
+  ];
+  var i = 0;
+  function next() {
+    if (i >= scripts.length) return;
+    var s = document.createElement('script');
+    s.src = scripts[i++];
+    s.onload = next;
+    document.body.appendChild(s);
+  }
+  next();
+}); });
+</script>
 </body>
 </html>

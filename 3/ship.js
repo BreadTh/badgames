@@ -107,6 +107,34 @@ function updateShadow() {
   for (; qi < 4; qi++) shadowQuads[qi].visible = false;
 }
 
+// ---- SHIP DITHER ----
+var shipDitherUniform = { value: 0 };
+
+var SHIP_DITHER_FRAG =
+  'uniform float shipDither;\n' +
+  'float bayer2s(float x, float y) { return 2.0*x + 3.0*y - 4.0*x*y; }\n';
+
+var SHIP_DITHER_DISCARD =
+  'if (shipDither > 0.0) {\n' +
+  '  vec2 p = mod(floor(gl_FragCoord.xy / 3.0), 4.0);\n' +
+  '  float lx = mod(p.x, 2.0); float ly = mod(p.y, 2.0);\n' +
+  '  float hx = floor(p.x / 2.0); float hy = floor(p.y / 2.0);\n' +
+  '  float val = 4.0 * bayer2s(lx, ly) + bayer2s(hx, hy);\n' +
+  '  float thr = (val + 0.5) / 16.0;\n' +
+  '  if (shipDither > thr) discard;\n' +
+  '}\n';
+
+function injectShipDither(mat) {
+  mat.onBeforeCompile = function(shader) {
+    shader.uniforms.shipDither = shipDitherUniform;
+    shader.fragmentShader = SHIP_DITHER_FRAG + shader.fragmentShader;
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <dithering_fragment>',
+      SHIP_DITHER_DISCARD
+    );
+  };
+}
+
 // ---- SHIP MESH ----
 function createShip() {
   shipMesh = new THREE.Group();
@@ -319,44 +347,74 @@ function createShip() {
 
   shipMesh.scale.set(0.7, 0.7, 0.35);
   // Tag meshes so we can find them for debris (skip non-Mesh children)
-  shipMesh.traverse(function(c) { if (c.isMesh) c.userData.shipPart = true; });
+  // Inject dither into all ship materials
+  var ditherInjected = [];
+  shipMesh.traverse(function(c) {
+    if (c.isMesh) {
+      c.userData.shipPart = true;
+      if (ditherInjected.indexOf(c.material) === -1) {
+        injectShipDither(c.material);
+        ditherInjected.push(c.material);
+      }
+    }
+  });
 
   scene.add(shipMesh);
 
 }
 
 // ---- SHIP DEBRIS (explosion) ----
+var debrisPool = [];  // pre-created clones, one per ship mesh part
+var debrisSources = []; // original mesh references for world transforms
 var shipDebris = [];
+
+// Pre-create debris meshes (called once after createShip)
+function initShipDebris() {
+  debrisSources = [];
+  shipMesh.traverse(function(c) { if (c.isMesh && c.userData.shipPart) debrisSources.push(c); });
+  for (var i = 0; i < debrisSources.length; i++) {
+    var clone = debrisSources[i].clone();
+    clone.visible = false;
+    scene.add(clone);
+    debrisPool.push({ mesh: clone, vx: 0, vy: 0, vz: 0, sx: 0, sy: 0, sz: 0 });
+  }
+}
+
+var _dPos = new THREE.Vector3();
+var _dQuat = new THREE.Quaternion();
+var _dScale = new THREE.Vector3();
 
 function explodeShip() {
   clearShipDebris();
   shipMesh.visible = false;
-  // Collect all mesh children, clone them as independent scene objects
-  var parts = [];
-  shipMesh.traverse(function(c) { if (c.isMesh && c.userData.shipPart) parts.push(c); });
-  for (var i = 0; i < parts.length; i++) {
-    var p = parts[i];
-    var clone = p.clone();
-    // Get world transform
-    var wPos = new THREE.Vector3();
-    p.getWorldPosition(wPos);
-    var wQuat = new THREE.Quaternion();
-    p.getWorldQuaternion(wQuat);
-    var wScale = new THREE.Vector3();
-    p.getWorldScale(wScale);
-    clone.position.copy(wPos);
-    clone.quaternion.copy(wQuat);
-    clone.scale.copy(wScale);
-    // Random velocity + current ship speed
-    var vx = (Math.random() - 0.5) * 8;
-    var vy = Math.random() * 6 + 2;
-    var vz = -deathSpeed + (Math.random() - 0.5) * 8;
-    // Random spin
-    var sx = (Math.random() - 0.5) * 12;
-    var sy = (Math.random() - 0.5) * 12;
-    var sz = (Math.random() - 0.5) * 12;
-    scene.add(clone);
-    shipDebris.push({ mesh: clone, vx: vx, vy: vy, vz: vz, sx: sx, sy: sy, sz: sz });
+  for (var i = 0; i < debrisPool.length; i++) {
+    var d = debrisPool[i];
+    var p = debrisSources[i];
+    p.getWorldPosition(_dPos);
+    p.getWorldQuaternion(_dQuat);
+    p.getWorldScale(_dScale);
+    d.mesh.position.copy(_dPos);
+    d.mesh.quaternion.copy(_dQuat);
+    d.mesh.scale.copy(_dScale);
+    var bloomMag = Math.random() * 6 + 2;
+    var spread1 = (Math.random() - 0.5) * 8;
+    var spread2 = (Math.random() - 0.5) * 8;
+    var bvx, bvy, bvz;
+    if (Math.abs(deathBloomY) > 0.5) {
+      bvx = spread1; bvy = bloomMag * deathBloomY; bvz = spread2;
+    } else if (Math.abs(deathBloomX) > 0.5) {
+      bvx = bloomMag * deathBloomX; bvy = spread1; bvz = spread2;
+    } else {
+      bvx = spread1; bvy = spread2; bvz = bloomMag * deathBloomZ;
+    }
+    d.vx = deathVX + bvx;
+    d.vy = deathVY + bvy;
+    d.vz = deathVZ + bvz;
+    d.sx = (Math.random() - 0.5) * 12;
+    d.sy = (Math.random() - 0.5) * 12;
+    d.sz = (Math.random() - 0.5) * 12;
+    d.mesh.visible = true;
+    shipDebris.push(d);
   }
 }
 
@@ -375,7 +433,7 @@ function updateShipDebris(dt) {
 
 function clearShipDebris() {
   for (var i = 0; i < shipDebris.length; i++) {
-    scene.remove(shipDebris[i].mesh);
+    shipDebris[i].mesh.visible = false;
   }
   shipDebris = [];
 }

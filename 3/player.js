@@ -6,14 +6,12 @@
 // TR = (playerX + PLAYER_W/2, playerY + PLAYER_H)
 
 // Get all rows the player's Z extent overlaps
-function playerRows() {
+// Returns into _prLo/_prHi globals to avoid allocation. Callers use for(r=_prLo;r<=_prHi;r++)
+var _prLo = 0, _prHi = 0;
+function playerRowsRange() {
   var hd = PLAYER_D / 2;
-  var frontRow = zToRow(playerZ - hd);
-  var backRow = zToRow(playerZ + hd);
-  // backRow <= frontRow since more-negative Z = higher row index
-  var rows = [];
-  for (var r = backRow; r <= frontRow; r++) rows.push(r);
-  return rows;
+  _prLo = zToRow(playerZ + hd);
+  _prHi = zToRow(playerZ - hd);
 }
 
 // Check if a point (x, y) is inside any block's solid region at a given row
@@ -33,6 +31,8 @@ var frozenKeys = null;
 var glideLockedIn = false;
 var padSustain = false;
 var deathReason = '';
+var deathVX = 0, deathVY = 0, deathVZ = 0;
+var deathBloomX = 0, deathBloomY = 1, deathBloomZ = 0; // bloom direction (axis-aligned unit vec)
 function die(reason) {
   if (!alive) return;
   if (isRecording) recordDeath(reason);
@@ -40,6 +40,7 @@ function die(reason) {
   state = 'dead';
   deathReason = reason;
   deathSpeed = playerSpeed;
+  if (frozenDist < 0) frozenDist = Math.abs(playerZ);
   stopContinuousSounds();
   if (reason === 'crash' || reason === 'kill') {
     createExplosion(playerX, playerY + 0.5, playerZ);
@@ -52,7 +53,7 @@ function die(reason) {
     shipMesh.visible = false;
   }
   calcAndSaveScore();
-  if (isRecording) recordScore();
+  if (isRecording) { recordScore(); stopRecording(); }
 }
 
 function win() {
@@ -60,6 +61,8 @@ function win() {
   state = 'winning';
   stopContinuousSounds();
   winTimer = 2.0;
+  winShipVZ = 0;
+  winShipZ = 0;
   if (!isPlayback) {
     clearedLevels[currentLevel] = true;
     localStorage.setItem('spaceRunnerCleared', JSON.stringify(clearedLevels));
@@ -69,6 +72,7 @@ function win() {
 
 // Spend fuel, or oxygen at 2x if out of fuel
 function spendFuel(cost) {
+  if (debugInvincible) return;
   if (fuel > 0) fuel = Math.max(0, fuel - cost);
   else oxygen = Math.max(0, oxygen - cost * 2);
 }
@@ -164,7 +168,7 @@ function updatePlayer(dt) {
   }
 
   // Oxygen (only drains after first acceleration)
-  if (started) oxygen = Math.max(0, oxygen - OXY_DRAIN * dt);
+  if (started && !debugInvincible) oxygen = Math.max(0, oxygen - OXY_DRAIN * dt);
 
   // ---- X INPUT (lateral) — computed before sub-step loop ----
   var sustainingX = !grounded && inp['Space'] && playerVY > 0 && hasPropellant;
@@ -177,8 +181,8 @@ function updatePlayer(dt) {
   var lateralFriction = grounded ? 8 : 0.5;
   var steering = false;
   var canSteer = grounded || hasPropellant;
-  if (canSteer && (inp['ArrowLeft'] || inp['KeyA'])) { playerVX -= lateralAccel * dt; steering = true; }
-  if (canSteer && (inp['ArrowRight'] || inp['KeyD'])) { playerVX += lateralAccel * dt; steering = true; }
+  if (canSteer && (inp['ArrowLeft'] || inp['KeyA'])) { playerVX -= lateralAccel * dt; steering = true; if (!started) started = true; }
+  if (canSteer && (inp['ArrowRight'] || inp['KeyD'])) { playerVX += lateralAccel * dt; steering = true; if (!started) started = true; }
   if (steering && started) spendFuel(0.8 * dt);
   if (grounded && !(inp['ArrowLeft'] || inp['KeyA'] || inp['ArrowRight'] || inp['KeyD'])) {
     playerVX *= Math.max(0, 1 - lateralFriction * dt);
@@ -195,6 +199,7 @@ function updatePlayer(dt) {
   // Jump initiation (once per frame)
   var canJump = grounded || coyoteTimer > 0;
   if ((inp['Space']) && canJump && hasPropellant && !noControl) {
+    if (!started) started = true;
     var speedPctJ = playerSpeed === 0 ? 1 : playerSpeed / MAX_SPEED;
     playerVY = JUMP_FORCE * (0.75 + 0.25 * speedPctJ);
     grounded = false;
@@ -219,10 +224,61 @@ function updatePlayer(dt) {
   var xBlocked = false;
 
   for (var msi = 0; msi < subSteps; msi++) {
+    // ---- SAVE ROWS BEFORE Z MOVE (for diagonal slip prevention) ----
+    playerRowsRange();
+    var prevLo = _prLo, prevHi = _prHi;
+
     // ---- Z MOVE ----
     var prevZ = playerZ;
     if (!zBlocked) {
       playerZ -= playerSpeed * subDt;
+    }
+
+    // ---- Z FRONT COLLISION (before Y move — prevents bonk-then-slip-under) ----
+    if (!zBlocked && playerSpeed > 0) {
+      var frontZ = playerZ - PLAYER_D / 2;
+      var fCorners = [
+        { x: playerX - hw, y: playerY },
+        { x: playerX + hw, y: playerY },
+        { x: playerX - hw, y: playerY + PLAYER_H * 0.5 },
+        { x: playerX + hw, y: playerY + PLAYER_H * 0.5 },
+        { x: playerX - hw, y: playerY + PLAYER_H },
+        { x: playerX + hw, y: playerY + PLAYER_H },
+      ];
+      var baseFrontRow = zToRow(frontZ);
+      for (var fri = 0; fri < 2; fri++) {
+        var checkRow = baseFrontRow + fri;
+        var wallBackFace = rowToZ(checkRow) + BLOCK_SIZE * 0.5;
+        if (frontZ < wallBackFace + 0.1) {
+          var blocked = false;
+          var frontKill = false;
+          for (var fci = 0; fci < fCorners.length; fci++) {
+            var fb = pointInBlock(fCorners[fci].x, fCorners[fci].y, checkRow);
+            if (fb) {
+              blocked = true;
+              if (fb.type === BLOCK.KILL) frontKill = true;
+            }
+          }
+          if (blocked) {
+            if (playerSpeed > KILL_SPEED_THRESHOLD && !debugInvincible) {
+              deathVX = playerVX; deathVY = playerVY; deathVZ = -playerSpeed * 0.7;
+              deathBloomX = 0; deathBloomY = 0; deathBloomZ = -1;
+              die('crash'); return;
+            }
+            if (frontKill && !debugInvincible) {
+              deathVX = playerVX; deathVY = playerVY; deathVZ = playerSpeed * 0.35;
+              deathBloomX = 0; deathBloomY = 0; deathBloomZ = 1;
+              die('kill'); return;
+            }
+            airDrainFuel = false; airDrainOxy = false;
+            if (playerSpeed > 2) { SFX.collide(); recordEvent('BF'); }
+            playerZ = Math.min(prevZ, wallBackFace + 0.1 + PLAYER_D / 2);
+            playerSpeed = 0;
+            zBlocked = true;
+            break;
+          }
+        }
+      }
     }
 
     // ---- Y MOVE (gravity/jump) ----
@@ -233,9 +289,9 @@ function updatePlayer(dt) {
       var prevY = playerY;
       var nearGround = false;
       if (playerVY <= 0) {
-        var gRows2 = playerRows();
-        for (var ng = 0; ng < gRows2.length && !nearGround; ng++) {
-          var ngCol = getColumnAtX(gRows2[ng], playerX);
+        playerRowsRange();
+        for (var ng = _prLo; ng <= _prHi && !nearGround; ng++) {
+          var ngCol = getColumnAtX(ng, playerX);
           for (var nbi = 0; nbi < ngCol.length; nbi++) {
             var gTop = blockTop(ngCol[nbi]);
             if (gTop <= playerY && playerY - gTop < BLOCK_SIZE) { nearGround = true; break; }
@@ -248,7 +304,7 @@ function updatePlayer(dt) {
       var sustaining = inp['Space'] && playerVY > 0 && hasPropellant;
       if (padSustain && (playerVY <= 0 || fuel <= 0)) padSustain = false;
       if (gliding) {
-        fuel = Math.max(0, fuel - FUEL_GLIDE_COST * subDt);
+        if (!debugInvincible) fuel = Math.max(0, fuel - FUEL_GLIDE_COST * subDt);
       } else if (sustaining) {
         spendFuel(FUEL_AIR_COST * subDt);
       }
@@ -256,31 +312,30 @@ function updatePlayer(dt) {
       playerVY += grav * subDt;
       playerY += playerVY * subDt;
 
-      // Landing check — all 4 bottom corners
+      // Landing check — all rows × both X edges
       if (playerVY <= 0) {
-        var hd = PLAYER_D / 2;
-        var botCorners = [
-          { x: playerX - hw, r: zToRow(playerZ - hd) },
-          { x: playerX + hw, r: zToRow(playerZ - hd) },
-          { x: playerX - hw, r: zToRow(playerZ + hd) },
-          { x: playerX + hw, r: zToRow(playerZ + hd) },
-        ];
+        playerRowsRange();
+        var landXL = playerX - hw, landXR = playerX + hw;
         var landSurface = null;
         var landBlock = null;
-        for (var lci = 0; lci < 4; lci++) {
-          var col = getColumnAtX(botCorners[lci].r, botCorners[lci].x);
-          for (var lbi = 0; lbi < col.length; lbi++) {
-            var surf = blockTop(col[lbi]);
-            if (prevY >= surf - 0.1 && playerY <= surf) {
-              if (landSurface === null || surf > landSurface) {
-                landSurface = surf;
-                landBlock = col[lbi];
+        for (var lri = _prLo; lri <= _prHi; lri++) {
+          for (var lxi = 0; lxi < 2; lxi++) {
+            var col = getColumnAtX(lri, lxi === 0 ? landXL : landXR);
+            for (var lbi = 0; lbi < col.length; lbi++) {
+              var surf = blockTop(col[lbi]);
+              if (prevY >= surf - 0.1 && playerY <= surf) {
+                if (landSurface === null || surf > landSurface) {
+                  landSurface = surf;
+                  landBlock = col[lbi];
+                }
               }
             }
           }
         }
         if (landSurface !== null) {
           if (landBlock.type === BLOCK.KILL && !debugInvincible) {
+            deathVX = playerVX; deathVY = -playerVY; deathVZ = -playerSpeed * 0.7;
+            deathBloomX = 0; deathBloomY = 1; deathBloomZ = 0;
             die('kill'); return;
           }
           airDrainFuel = false; airDrainOxy = false;
@@ -326,76 +381,42 @@ function updatePlayer(dt) {
         }
       }
 
-      // Head bonk check — all 4 top corners
+      // Head bonk check — all rows × both X edges
       if (playerVY > 0) {
-        var hd2 = PLAYER_D / 2;
         var topY = playerY + PLAYER_H;
-        var topCorners = [
-          { x: playerX - hw, r: zToRow(playerZ - hd2) },
-          { x: playerX + hw, r: zToRow(playerZ - hd2) },
-          { x: playerX - hw, r: zToRow(playerZ + hd2) },
-          { x: playerX + hw, r: zToRow(playerZ + hd2) },
-        ];
+        playerRowsRange();
+        var bonkXL = playerX - hw, bonkXR = playerX + hw;
         var lowestBot = Infinity;
         var bonked = false;
         var bonkedKill = false;
-        for (var bci = 0; bci < 4; bci++) {
-          var col = getColumnAtX(topCorners[bci].r, topCorners[bci].x);
-          for (var bbi = 0; bbi < col.length; bbi++) {
-            var bot = blockBottom(col[bbi]);
-            var top = blockTop(col[bbi]);
-            if (topY >= bot && topY <= top) {
-              bonked = true;
-              if (col[bbi].type === BLOCK.KILL) bonkedKill = true;
-              if (bot < lowestBot) lowestBot = bot;
+        for (var bri = _prLo; bri <= _prHi; bri++) {
+          for (var bxi = 0; bxi < 2; bxi++) {
+            var col = getColumnAtX(bri, bxi === 0 ? bonkXL : bonkXR);
+            for (var bbi = 0; bbi < col.length; bbi++) {
+              var bot = blockBottom(col[bbi]);
+              var top = blockTop(col[bbi]);
+              if (topY >= bot && topY <= top) {
+                bonked = true;
+                if (col[bbi].type === BLOCK.KILL) bonkedKill = true;
+                if (bot < lowestBot) lowestBot = bot;
+              }
             }
           }
         }
         if (bonked) {
-          if (bonkedKill && !debugInvincible) { die('kill'); return; }
+          if (bonkedKill && !debugInvincible) {
+            deathVX = playerVX; deathVY = -playerVY; deathVZ = -playerSpeed * 0.7;
+            deathBloomX = 0; deathBloomY = -1; deathBloomZ = 0;
+            die('kill'); return;
+          }
           airDrainFuel = false; airDrainOxy = false;
-          if (!sndBonkWas) SFX.bonk();
+          if (!sndBonkWas) { SFX.bonk(); recordEvent('BH'); }
           sndBonkWas = true;
           playerSpeed *= 0.9;
           playerVY = 0;
-          playerY = lowestBot - PLAYER_H;
+          playerY = lowestBot - PLAYER_H - 0.01;
         } else {
           sndBonkWas = false;
-        }
-      }
-    }
-
-    // ---- Z FRONT COLLISION ----
-    if (!zBlocked && playerSpeed > 0) {
-      var frontZ = playerZ - PLAYER_D / 2;
-      var fCorners = [
-        { x: playerX - hw, y: playerY + 0.15 },
-        { x: playerX + hw, y: playerY + 0.15 },
-        { x: playerX - hw, y: playerY + PLAYER_H * 0.5 },
-        { x: playerX + hw, y: playerY + PLAYER_H * 0.5 },
-      ];
-      var baseFrontRow = zToRow(frontZ);
-      for (var fri = 0; fri < 2; fri++) {
-        var checkRow = baseFrontRow + fri;
-        var wallBackFace = rowToZ(checkRow) + BLOCK_SIZE * 0.5;
-        if (frontZ < wallBackFace + 0.1) {
-          var blocked = false;
-          for (var fci = 0; fci < 4; fci++) {
-            if (pointInBlock(fCorners[fci].x, fCorners[fci].y, checkRow)) {
-              blocked = true; break;
-            }
-          }
-          if (blocked) {
-            if (playerSpeed > KILL_SPEED_THRESHOLD && !debugInvincible) {
-              die('crash'); return;
-            }
-            airDrainFuel = false; airDrainOxy = false;
-            if (playerSpeed > 2) SFX.collide();
-            playerZ = Math.min(prevZ, wallBackFace + 0.1 + PLAYER_D / 2);
-            playerSpeed = 0;
-            zBlocked = true;
-            break;
-          }
         }
       }
     }
@@ -408,21 +429,23 @@ function updatePlayer(dt) {
 
     // ---- SIDE COLLISION ----
     if (!xBlocked) {
-      var sRows = playerRows();
+      // Merge current rows with pre-Z-move rows to prevent diagonal corner-cutting
+      playerRowsRange();
+      var sLo = Math.min(prevLo, _prLo), sHi = Math.max(prevHi, _prHi);
       var hitLeft = false, hitRight = false;
       var killLeft = false, killRight = false;
-      for (var ssi = 0; ssi < sRows.length; ssi++) {
+      for (var ssi = sLo; ssi <= sHi; ssi++) {
         if (!hitLeft) {
-          var lbBot = pointInBlock(playerX - hw, playerY, sRows[ssi]);
-          var lbTop = pointInBlock(playerX - hw, playerY + PLAYER_H, sRows[ssi]);
+          var lbBot = pointInBlock(playerX - hw, playerY, ssi);
+          var lbTop = pointInBlock(playerX - hw, playerY + PLAYER_H, ssi);
           if (lbBot || lbTop) {
             hitLeft = true;
             if ((lbBot && lbBot.type === BLOCK.KILL) || (lbTop && lbTop.type === BLOCK.KILL)) killLeft = true;
           }
         }
         if (!hitRight) {
-          var rbBot = pointInBlock(playerX + hw, playerY, sRows[ssi]);
-          var rbTop = pointInBlock(playerX + hw, playerY + PLAYER_H, sRows[ssi]);
+          var rbBot = pointInBlock(playerX + hw, playerY, ssi);
+          var rbTop = pointInBlock(playerX + hw, playerY + PLAYER_H, ssi);
           if (rbBot || rbTop) {
             hitRight = true;
             if ((rbBot && rbBot.type === BLOCK.KILL) || (rbTop && rbTop.type === BLOCK.KILL)) killRight = true;
@@ -432,9 +455,13 @@ function updatePlayer(dt) {
       var WALL_BOUNCE_THRESHOLD = 4;
       var WALL_GRIND_DECEL = 24;
       if (hitLeft && playerVX <= 0) {
-        if (killLeft && !debugInvincible) { die('kill'); return; }
+        if (killLeft && !debugInvincible) {
+          deathVX = -playerVX; deathVY = playerVY; deathVZ = -playerSpeed * 0.7;
+          deathBloomX = 1; deathBloomY = 0; deathBloomZ = 0;
+          die('kill'); return;
+        }
         airDrainFuel = false; airDrainOxy = false;
-        if (!sndHitLeftWas) SFX.wallTap();
+        if (!sndHitLeftWas) { SFX.wallTap(); recordEvent('BS'); }
         sndHitLeftWas = true;
         playerX = prevX;
         if (Math.abs(playerVX) > WALL_BOUNCE_THRESHOLD) {
@@ -449,9 +476,13 @@ function updatePlayer(dt) {
         sndHitLeftWas = false;
       }
       if (hitRight && playerVX >= 0) {
-        if (killRight && !debugInvincible) { die('kill'); return; }
+        if (killRight && !debugInvincible) {
+          deathVX = -playerVX; deathVY = playerVY; deathVZ = -playerSpeed * 0.7;
+          deathBloomX = -1; deathBloomY = 0; deathBloomZ = 0;
+          die('kill'); return;
+        }
         airDrainFuel = false; airDrainOxy = false;
-        if (!sndHitRightWas) SFX.wallTap();
+        if (!sndHitRightWas) { SFX.wallTap(); recordEvent('BS'); }
         sndHitRightWas = true;
         playerX = prevX;
         if (Math.abs(playerVX) > WALL_BOUNCE_THRESHOLD) {
@@ -478,11 +509,12 @@ function updatePlayer(dt) {
   }
 
   // ---- GROUND CHECKS ----
-  var gRows = playerRows();
+  playerRowsRange();
+  var gLo = _prLo, gHi = _prHi;
   // Pick the block the player is standing on for ground effects
   var block = null;
-  for (var gi = 0; gi < gRows.length; gi++) {
-    var col = getColumnAtX(gRows[gi], playerX);
+  for (var gi = gLo; gi <= gHi; gi++) {
+    var col = getColumnAtX(gi, playerX);
     for (var bi = 0; bi < col.length; bi++) {
       if (Math.abs(blockTop(col[bi]) - playerY) < 0.2) {
         block = col[bi]; break;
@@ -495,8 +527,8 @@ function updatePlayer(dt) {
   if (block && block.type === BLOCK.WIN_TUNNEL) {
     win();
   } else {
-    for (var wi = 0; wi < gRows.length && state === 'playing'; wi++) {
-      var wCol = getColumnAtX(gRows[wi], playerX);
+    for (var wi = gLo; wi <= gHi && state === 'playing'; wi++) {
+      var wCol = getColumnAtX(wi, playerX);
       for (var wbi = 0; wbi < wCol.length; wbi++) {
         if (wCol[wbi].type === BLOCK.WIN_TUNNEL && blockTop(wCol[wbi]) <= playerY) {
           win(); break;
@@ -508,10 +540,11 @@ function updatePlayer(dt) {
   // Check for fuel/oxygen blocks within half a block left/right
   var nearFuel = false, nearOxy = false;
   if (grounded) {
-    var checkXs = [playerX - LANE_WIDTH * 0.5, playerX, playerX + LANE_WIDTH * 0.5];
-    for (var ci = 0; ci < checkXs.length && !(nearFuel && nearOxy); ci++) {
-      for (var gi2 = 0; gi2 < gRows.length && !(nearFuel && nearOxy); gi2++) {
-        var col2 = getColumnAtX(gRows[gi2], checkXs[ci]);
+    var checkXs0 = playerX - LANE_WIDTH * 0.5, checkXs1 = playerX, checkXs2 = playerX + LANE_WIDTH * 0.5;
+    for (var ci = 0; ci < 3 && !(nearFuel && nearOxy); ci++) {
+      var cx = ci === 0 ? checkXs0 : ci === 1 ? checkXs1 : checkXs2;
+      for (var gi2 = gLo; gi2 <= gHi && !(nearFuel && nearOxy); gi2++) {
+        var col2 = getColumnAtX(gi2, cx);
         for (var bi2 = 0; bi2 < col2.length; bi2++) {
           if (Math.abs(blockTop(col2[bi2]) - playerY) < 0.2) {
             if (col2[bi2].type === BLOCK.FUEL) nearFuel = true;
@@ -547,7 +580,11 @@ function updatePlayer(dt) {
       case BLOCK.FUEL:
         break; // handled above
       case BLOCK.KILL:
-        if (!debugInvincible) die('kill');
+        if (!debugInvincible) {
+          deathVX = playerVX; deathVY = -playerVY; deathVZ = -playerSpeed * 0.7;
+          deathBloomX = 0; deathBloomY = 1; deathBloomZ = 0;
+          die('kill');
+        }
         break;
       case BLOCK.JUMP:
         if (fuel > 0) {
@@ -558,13 +595,13 @@ function updatePlayer(dt) {
         }
         break;
       case BLOCK.DRAIN_FUEL:
-        fuel = Math.max(0, fuel - FUEL_DRAIN_RATE * dt);
+        if (!debugInvincible) fuel = Math.max(0, fuel - FUEL_DRAIN_RATE * dt);
         airDrainFuel = true;
         sndDrainTimer -= dt;
         if (sndDrainTimer <= 0) { SFX.drain(); sndDrainTimer = 0.4; }
         break;
       case BLOCK.DRAIN_OXY:
-        oxygen = Math.max(0, oxygen - OXY_DRAIN_BLOCK_RATE * dt);
+        if (!debugInvincible) oxygen = Math.max(0, oxygen - OXY_DRAIN_BLOCK_RATE * dt);
         airDrainOxy = true;
         sndDrainTimer -= dt;
         if (sndDrainTimer <= 0) { SFX.drain(); sndDrainTimer = 0.4; }
@@ -575,27 +612,24 @@ function updatePlayer(dt) {
 
   // Airborne drain (persists from drain block until next contact)
   if (!grounded && (airDrainFuel || airDrainOxy)) {
-    if (airDrainFuel) fuel = Math.max(0, fuel - FUEL_DRAIN_RATE * dt);
-    if (airDrainOxy) oxygen = Math.max(0, oxygen - OXY_DRAIN_BLOCK_RATE * dt);
+    if (airDrainFuel && !debugInvincible) fuel = Math.max(0, fuel - FUEL_DRAIN_RATE * dt);
+    if (airDrainOxy && !debugInvincible) oxygen = Math.max(0, oxygen - OXY_DRAIN_BLOCK_RATE * dt);
     sndDrainTimer -= dt;
     if (sndDrainTimer <= 0) { SFX.drain(); sndDrainTimer = 0.4; }
   }
 
-  // Fall if no ground below — check all 4 bottom corners
+  // Fall if no ground below — check all rows × both X edges
   if (grounded) {
-    var hd3 = PLAYER_D / 2;
-    var groundCorners = [
-      { x: playerX - hw, r: zToRow(playerZ - hd3) },
-      { x: playerX + hw, r: zToRow(playerZ - hd3) },
-      { x: playerX - hw, r: zToRow(playerZ + hd3) },
-      { x: playerX + hw, r: zToRow(playerZ + hd3) },
-    ];
+    playerRowsRange();
+    var grXL = playerX - hw, grXR = playerX + hw;
     var bestSurface = null;
-    for (var fi = 0; fi < 4; fi++) {
-      var col = getColumnAtX(groundCorners[fi].r, groundCorners[fi].x);
-      for (var bi = 0; bi < col.length; bi++) {
-        var gs = blockTop(col[bi]);
-        if (Math.abs(playerY - gs) < 0.2 && (bestSurface === null || gs > bestSurface)) bestSurface = gs;
+    for (var gri = _prLo; gri <= _prHi; gri++) {
+      for (var gxi = 0; gxi < 2; gxi++) {
+        var col = getColumnAtX(gri, gxi === 0 ? grXL : grXR);
+        for (var bi = 0; bi < col.length; bi++) {
+          var gs = blockTop(col[bi]);
+          if (Math.abs(playerY - gs) < 0.2 && (bestSurface === null || gs > bestSurface)) bestSurface = gs;
+        }
       }
     }
     if (bestSurface === null) {
@@ -610,6 +644,9 @@ function updatePlayer(dt) {
       }
     }
   }
+
+  // Freeze distance display when falling below all blocks
+  if (!grounded && playerY < -1 && frozenDist < 0) frozenDist = Math.abs(playerZ);
 
   // Fell off map
   if (playerY < -20) die('fall');
@@ -629,7 +666,8 @@ function updateCamera() {
   camera.position.set(0, 5, playerZ + 10);
   camera.lookAt(new THREE.Vector3(0, 0, playerZ - 20));
 
-  shipMesh.position.set(playerX, playerY + 0.35, playerZ);
+  var shipZOffset = (state === 'winning' || state === 'won') ? winShipZ : 0;
+  shipMesh.position.set(playerX, playerY + 0.35, playerZ + shipZOffset);
   var tilt = -playerVX / 12 * 0.4;
   shipMesh.rotation.z = Math.max(-0.4, Math.min(0.4, tilt));
   var pitchTarget = 0;
@@ -646,12 +684,7 @@ function updateCamera() {
 
 
   if (starField) starField.position.z = playerZ;
-  if (planetMesh) {
-    planetMesh.position.z = playerZ;
-    planetMesh.rotation.y += 0.00005;
-  }
   if (debugPlane) debugPlane.position.z = playerZ;
-  if (cloudMesh) cloudMesh.rotation.y += 0.0003;
 
   if (engineMatRef) {
     var speedPct = playerSpeed / MAX_SPEED;

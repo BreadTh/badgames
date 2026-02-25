@@ -1,151 +1,3 @@
-// ---- PLANET ----
-var planetMesh, cloudMesh;
-
-function makePlanetTexture(size) {
-  var c = document.createElement('canvas');
-  c.width = size; c.height = size;
-  var ctx = c.getContext('2d');
-
-  // Deep ocean base
-  ctx.fillStyle = '#0a1e3d';
-  ctx.fillRect(0, 0, size, size);
-
-  // Simple noise-ish land and water using overlapping circles
-  function blob(x, y, r, color, alpha) {
-    var g = ctx.createRadialGradient(x, y, 0, x, y, r);
-    g.addColorStop(0, color);
-    g.addColorStop(1, 'transparent');
-    ctx.globalAlpha = alpha;
-    ctx.fillStyle = g;
-    ctx.fillRect(x - r, y - r, r * 2, r * 2);
-  }
-
-  // Seed a simple RNG for consistent results
-  var seed = 42;
-  function rand() { seed = (seed * 16807 + 0) % 2147483647; return seed / 2147483647; }
-
-  // Ocean variations
-  for (var i = 0; i < 30; i++) {
-    var hue = 200 + rand() * 40;
-    var light = 15 + rand() * 20;
-    blob(rand() * size, rand() * size, 40 + rand() * 120,
-      'hsl(' + hue + ',60%,' + light + '%)', 0.3 + rand() * 0.3);
-  }
-
-  // Land masses — greens and tans
-  for (var i = 0; i < 18; i++) {
-    var lx = rand() * size, ly = rand() * size;
-    var lr = 20 + rand() * 80;
-    var green = rand() > 0.4;
-    if (green) {
-      blob(lx, ly, lr, 'hsl(' + (90 + rand() * 50) + ',40%,' + (15 + rand() * 20) + '%)', 0.5 + rand() * 0.4);
-    } else {
-      blob(lx, ly, lr, 'hsl(' + (30 + rand() * 20) + ',30%,' + (20 + rand() * 15) + '%)', 0.4 + rand() * 0.3);
-    }
-    // Mountain highlights
-    if (rand() > 0.5) {
-      blob(lx + rand() * 20 - 10, ly + rand() * 20 - 10, lr * 0.3,
-        'hsl(40,20%,' + (35 + rand() * 15) + '%)', 0.3);
-    }
-  }
-
-  // Shallow water / coastal teal
-  for (var i = 0; i < 12; i++) {
-    blob(rand() * size, rand() * size, 15 + rand() * 50,
-      'hsl(' + (170 + rand() * 30) + ',50%,' + (20 + rand() * 15) + '%)', 0.25);
-  }
-
-  ctx.globalAlpha = 1;
-  return new THREE.CanvasTexture(c);
-}
-
-function makeCloudTexture(size) {
-  var c = document.createElement('canvas');
-  c.width = size; c.height = size;
-  var ctx = c.getContext('2d');
-
-  var seed = 137;
-  function rand() { seed = (seed * 16807 + 0) % 2147483647; return seed / 2147483647; }
-
-  // Swirly cloud bands
-  for (var i = 0; i < 40; i++) {
-    var cx = rand() * size;
-    var cy = rand() * size;
-    var cr = 10 + rand() * 80;
-    var g = ctx.createRadialGradient(cx, cy, 0, cx, cy, cr);
-    g.addColorStop(0, 'rgba(255,255,255,' + (0.08 + rand() * 0.15) + ')');
-    g.addColorStop(0.6, 'rgba(200,220,255,' + (0.03 + rand() * 0.06) + ')');
-    g.addColorStop(1, 'transparent');
-    ctx.fillStyle = g;
-    ctx.fillRect(cx - cr, cy - cr, cr * 2, cr * 2);
-  }
-
-  // Swirl streaks — elongated ellipses
-  for (var i = 0; i < 15; i++) {
-    ctx.save();
-    ctx.translate(rand() * size, rand() * size);
-    ctx.rotate(rand() * Math.PI);
-    ctx.scale(2 + rand() * 3, 1);
-    var sr = 10 + rand() * 30;
-    var sg = ctx.createRadialGradient(0, 0, 0, 0, 0, sr);
-    sg.addColorStop(0, 'rgba(230,240,255,' + (0.06 + rand() * 0.1) + ')');
-    sg.addColorStop(1, 'transparent');
-    ctx.fillStyle = sg;
-    ctx.fillRect(-sr, -sr, sr * 2, sr * 2);
-    ctx.restore();
-  }
-
-  return new THREE.CanvasTexture(c);
-}
-
-function createPlanet() {
-  var radius = 300;
-  var planetGeo = new THREE.SphereGeometry(radius, 64, 48);
-  var planetTex = makePlanetTexture(1024);
-  planetTex.wrapS = THREE.RepeatWrapping;
-  planetTex.wrapT = THREE.RepeatWrapping;
-  var planetMat = new THREE.MeshPhongMaterial({
-    map: planetTex,
-    emissive: 0x061222,
-    emissiveIntensity: 0.4,
-    shininess: 10,
-    fog: false
-  });
-  planetMesh = new THREE.Mesh(planetGeo, planetMat);
-  planetMesh.position.set(80, -310, 0);
-  scene.add(planetMesh);
-
-  // Cloud layer
-  var cloudGeo = new THREE.SphereGeometry(radius + 1.5, 64, 48);
-  var cloudTex = makeCloudTexture(1024);
-  cloudTex.wrapS = THREE.RepeatWrapping;
-  cloudTex.wrapT = THREE.RepeatWrapping;
-  var cloudMat = new THREE.MeshPhongMaterial({
-    map: cloudTex,
-    transparent: true,
-    opacity: 0.7,
-    emissive: 0x223344,
-    emissiveIntensity: 0.3,
-    fog: false,
-    depthWrite: false
-  });
-  cloudMesh = new THREE.Mesh(cloudGeo, cloudMat);
-  planetMesh.add(cloudMesh); // child of planet, moves with it
-
-  // Atmosphere rim glow
-  var atmosGeo = new THREE.SphereGeometry(radius + 4, 64, 48);
-  var atmosMat = new THREE.MeshBasicMaterial({
-    color: 0x4488cc,
-    transparent: true,
-    opacity: 0.08,
-    fog: false,
-    side: THREE.BackSide,
-    depthWrite: false
-  });
-  var atmosMesh = new THREE.Mesh(atmosGeo, atmosMat);
-  planetMesh.add(atmosMesh); // child of planet
-}
-
 // ---- INIT 3D ----
 function init3D() {
   scene = new THREE.Scene();
@@ -178,33 +30,71 @@ function init3D() {
 
   // Ship
   createShip();
+  initShipDebris();
   createShadow();
 
-  // Stars
+  // Stars — cylindrical tunnel arrangement
+  var STAR_COUNT = 2000;
+  var STAR_DEPTH = 800;  // tunnel length along Z
+  var STAR_RMIN = 70;   // inner radius
+  var STAR_RMAX = 90;   // outer radius
+  var STAR_FADE_START = 0.5; // taper fraction where stars become fully visible
+  var STAR_DECEL = 0.99;    // scroll deceleration (0=uniform, 1=full stop at camera)
   var starGeo = new THREE.BufferGeometry();
-  var starVerts = [];
-  for (var i = 0; i < 2000; i++) {
-    starVerts.push(
-      (Math.random() - 0.5) * 200,
-      Math.random() * 80 + 5,
-      (Math.random() - 0.5) * 200
-    );
+  var starVerts = new Float32Array(STAR_COUNT * 3);
+  var starColors = new Float32Array(STAR_COUNT * 3);
+  var starAngles = new Float32Array(STAR_COUNT);
+  var starRadii = new Float32Array(STAR_COUNT);
+  var starFadeThresh = new Float32Array(STAR_COUNT);
+  var zBack = STAR_DEPTH * 0.1;
+  var zFront = -STAR_DEPTH * 0.8;
+  var zRange = zBack - zFront;
+  for (var i = 0; i < STAR_COUNT; i++) {
+    starAngles[i] = Math.random() * Math.PI * 2;
+    starRadii[i] = STAR_RMIN + Math.random() * (STAR_RMAX - STAR_RMIN);
+    starFadeThresh[i] = Math.random() * STAR_FADE_START;
+    var t0 = (1 - Math.pow(1 - STAR_DECEL, Math.random())) / STAR_DECEL;
+    var sz = zFront + t0 * zRange;
+    var taper = Math.max(0, (sz - zFront) / zRange);
+    starVerts[i * 3] = Math.cos(starAngles[i]) * starRadii[i] * taper;
+    starVerts[i * 3 + 1] = Math.sin(starAngles[i]) * starRadii[i] * taper;
+    starVerts[i * 3 + 2] = sz;
+    // Fade: invisible at far tip (taper=0), fully visible by STAR_FADE_START
+    var fade = taper >= STAR_FADE_START ? 1.0 : taper <= starFadeThresh[i] ? 0.0 : (taper - starFadeThresh[i]) / (STAR_FADE_START - starFadeThresh[i]);
+    starColors[i * 3] = fade; starColors[i * 3 + 1] = fade; starColors[i * 3 + 2] = fade;
   }
-  starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starVerts, 3));
-  var starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.3, depthTest: false });
+  starGeo.setAttribute('position', new THREE.BufferAttribute(starVerts, 3));
+  starGeo.setAttribute('color', new THREE.BufferAttribute(starColors, 3));
+  var starMat = new THREE.PointsMaterial({ size: 0.3, vertexColors: true, transparent: true, opacity: 0.6, fog: false });
   starField = new THREE.Points(starGeo, starMat);
   starField.renderOrder = -1;
+  starField.userData.depth = STAR_DEPTH;
+  starField.userData.rmin = STAR_RMIN;
+  starField.userData.rmax = STAR_RMAX;
+  starField.userData.fadeStart = STAR_FADE_START;
+  starField.userData.decel = STAR_DECEL;
+  starField.userData.angles = starAngles;
+  starField.userData.radii = starRadii;
+  starField.userData.fadeThresh = starFadeThresh;
+  starField.userData.zBack = zBack;
+  starField.userData.zFront = zFront;
+  starField.userData.zRange = zRange;
   scene.add(starField);
-
-  // Planet
-  createPlanet();
 
   // Particles
   initExplosion();
-  initSpeedLines();
   initEngineTrail();
   initSparks();
   initDust();
+
+  // Pre-warm shaders: make hidden debris visible, render once (canvas is display:none),
+  // then hide again. Avoids shader compilation lag on first explosion.
+  var i;
+  for (i = 0; i < debrisMeshes.length; i++) debrisMeshes[i].visible = true;
+  for (i = 0; i < debrisPool.length; i++) debrisPool[i].mesh.visible = true;
+  renderer.render(scene, camera);
+  for (i = 0; i < debrisMeshes.length; i++) debrisMeshes[i].visible = false;
+  for (i = 0; i < debrisPool.length; i++) debrisPool[i].mesh.visible = false;
 
   window.addEventListener('resize', function() {
     camera.aspect = window.innerWidth / window.innerHeight;
@@ -215,4 +105,57 @@ function init3D() {
       hudCanvas.height = window.innerHeight;
     }
   });
+}
+
+var lastStarZ = 0;
+var winStarSpeed = 1;
+function updateStars(dt) {
+  if (!starField || !starField.visible) return;
+  var pos = starField.geometry.attributes.position.array;
+  var angles = starField.userData.angles;
+  var radii = starField.userData.radii;
+  var zBack = starField.userData.zBack;
+  var zFront = starField.userData.zFront;
+  var zRange = starField.userData.zRange;
+  var rmin = starField.userData.rmin;
+  var rmax = starField.userData.rmax;
+  var fadeThresh = starField.userData.fadeThresh;
+  var fadeStart = starField.userData.fadeStart;
+  var decel = starField.userData.decel;
+  var col = starField.geometry.attributes.color.array;
+  // Scroll based on actual camera movement
+  var dz = playerZ - lastStarZ;
+  lastStarZ = playerZ;
+  if (state === 'winning' || state === 'won') {
+    if (shipDitherUniform.value >= 1) {
+      winStarSpeed = Math.max(0, winStarSpeed - 8.0 * dt);
+    } else {
+      winStarSpeed += 16.0 * dt;
+    }
+  } else {
+    winStarSpeed = 1;
+  }
+  var scroll = -dz * 0.0375 * winStarSpeed;
+  var totalStars = pos.length / 3;
+  for (var si = 0; si < totalStars; si++) {
+    var i3 = si * 3;
+    var t = Math.max(0, (pos[i3 + 2] - zFront) / zRange);
+    pos[i3 + 2] += scroll * (1 - t * decel);
+    // Wrap stars that pass behind camera back to far end
+    if (pos[i3 + 2] > zBack) {
+      angles[si] = Math.random() * Math.PI * 2;
+      radii[si] = rmin + Math.random() * (rmax - rmin);
+      fadeThresh[si] = Math.random() * fadeStart;
+      pos[i3 + 2] = zFront + Math.random() * 10;
+    }
+    // Recompute XY from taper every frame — cone shape
+    var taper = Math.max(0, (pos[i3 + 2] - zFront) / zRange);
+    pos[i3] = Math.cos(angles[si]) * radii[si] * taper;
+    pos[i3 + 1] = Math.sin(angles[si]) * radii[si] * taper;
+    // Fade: invisible at far tip (taper=0), fully visible by fadeStart
+    var fade = taper >= fadeStart ? 1.0 : taper <= fadeThresh[si] ? 0.0 : (taper - fadeThresh[si]) / (fadeStart - fadeThresh[si]);
+    col[i3] = fade; col[i3 + 1] = fade; col[i3 + 2] = fade;
+  }
+  starField.geometry.attributes.position.needsUpdate = true;
+  starField.geometry.attributes.color.needsUpdate = true;
 }

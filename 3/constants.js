@@ -48,8 +48,10 @@ var CURVE_START = 1/5; // fraction of view distance before curve begins
 var CURVE_LERP_RATE = 12; // exponential lerp rate for curvature toggle (~0.25s)
 var DEATH_DITHER_DELAY = 0.5; // seconds before dither sweep starts
 var DEATH_DITHER_DURATION = 0.75; // seconds for dither sweep
+var SHIP_DITHER_DURATION = 1.5; // seconds for ship to dither out after level dither completes
 var DEATH_DITHER_X = 0;  // weight of world X in sweep direction
 var DEATH_DITHER_Z = -1; // weight of distance-ahead in sweep direction (negative = far end first)
+var DITHER_MAX_AHEAD = VIEW_DISTANCE * CURVE_START; // tunnel dither stops where curve begins
 var BASE_SPEED = 5;
 var MAX_SPEED = 40;
 var BOOST_SPEED_PCT = 0.25; // extra speed while holding accel at max
@@ -73,6 +75,17 @@ var PLAYER_H = 0.475;
 var PLAYER_W = 0.6; // collision width
 var PLAYER_D = 1.2; // collision depth (Z)
 
+// Fade durations (ms)
+var FADE_LOADING_IN = 250;       // loading text fades in
+var FADE_BOOT_OUT = 250;         // loading text fades away
+var FADE_BOOT_IN = 250;          // overlay fades to reveal menu after boot
+var FADE_START_LEVEL_OUT = 125;  // menu fades to black before level
+var FADE_START_LEVEL_IN = 125;   // level fades in from black
+var FADE_TO_MENU_OUT = 125;      // level fades to black before menu
+var FADE_TO_MENU_IN = 125;       // menu fades in from black
+var FADE_RESTART_OUT = 63;       // level fades to black for restart
+var FADE_RESTART_IN = 63;        // level fades in from black after restart
+
 
 // Three.js
 var scene, camera, renderer;
@@ -83,10 +96,9 @@ var starField;
 var engineMatRef;
 
 // Merged geometry system
-var loadedRowData = {};  // rowIdx -> array of {lane, h, type, mask, bucket, x, y, z}
-var mergedMaterials = {}; // bucket key -> MeshPhongMaterial
-var mergedMeshes = {};    // bucket key -> THREE.Mesh
-var mergedDirty = false;
+var loadedRowData = {};   // rowIdx -> array of block objects
+var mergedMesh = null;    // single THREE.Mesh
+var mergedMaterial = null; // single MeshPhongMaterial
 var curveStart = VIEW_DISTANCE * CURVE_START;
 var pathCurveUniform = { value: PATH_CURVE };
 var curveTarget = PATH_CURVE;
@@ -105,7 +117,14 @@ window.addEventListener('blur', function() { if (!isPlayback) keys = {}; });
 
 // Timers
 var deathTimer = 0;
+var deathStoppedTimer = 0; // time since scroll stopped after death
+var deathFade = 0; // 0-1, ramps over 125ms after death for HUD gray transition
+var frozenDist = -1; // locked distance display (-1 = live)
 var winTimer = 0;
+var wonTime = 0; // time since entering 'won' state
+var winLiftBoost = 0;
+var winShipVZ = 0;   // ship's forward velocity during win (visual only)
+var winShipZ = 0;    // ship's forward offset during win (visual only)
 var stuckTimer = 0;
 
 // Debug
