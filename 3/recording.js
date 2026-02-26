@@ -126,7 +126,7 @@ function _recMix(h, v) {
 }
 
 function computeRecHash(levelIdx, eventCount, flagBits) {
-  var h = levelIdx * 2749;
+  var h = LEVELS[levelIdx].id * 2749;
   var name = LEVELS[levelIdx].name;
   for (var i = 0; i < name.length; i++) h = _recMix(h, name.charCodeAt(i));
   h = _recMix(h, eventCount * 3);
@@ -207,7 +207,7 @@ function serializeRecording(levelIdx) {
   var flagBits = recDebugWasOn ? 1 : 0;
   var hash = computeRecHash(levelIdx, trimmed.length, flagBits);
   var header = 'SPACERUNNER REC v1\n';
-  header += 'L:' + levelIdx + ':' + LEVELS[levelIdx].name + '\n';
+  header += 'L:' + LEVELS[levelIdx].id + ':' + LEVELS[levelIdx].name + '\n';
   header += 'C:' + hash + '\n';
   header += '---EVENTS---\n';
   var events = trimmed.join('\n');
@@ -270,12 +270,16 @@ function parseRecording(text) {
   if (lines[idx].trim() !== 'SPACERUNNER REC v1') return null;
   idx++;
 
-  // Level info
+  // Level info (L:id:name)
   var levelLine = lines[idx].trim();
   if (levelLine.indexOf('L:') !== 0) return null;
   var lParts = levelLine.substring(2).split(':');
-  var level = parseInt(lParts[0], 10);
+  var levelId = parseInt(lParts[0], 10);
   var levelName = lParts.slice(1).join(':');
+  var level = -1;
+  for (var li = 0; li < LEVELS.length; li++) {
+    if (LEVELS[li].id === levelId) { level = li; break; }
+  }
   idx++;
 
   // Optional content hash
@@ -621,7 +625,7 @@ function stopPlayback() {
         return;
       }
       if (data.level < 0 || data.level >= LEVELS.length) {
-        alert('Unknown level index: ' + data.level);
+        alert('Unknown level id in recording');
         return;
       }
       startPlayback(data);

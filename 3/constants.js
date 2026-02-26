@@ -4,6 +4,7 @@ var currentLevel = 0;
 var clearedLevels = JSON.parse(localStorage.getItem('spaceRunnerCleared') || '{}');
 var score = 0;
 var isNewBest = false;
+var prevBest = 0;
 var levelTimer = 0;
 var levelTimerMax = 0;
 var started = false; // true once player first accelerates
@@ -71,6 +72,9 @@ var FUEL_EMPTY_DECEL = 3; // speed loss per second with no fuel
 var OXY_DRAIN = 2; // per second always
 var OXY_REFILL = 22.5; // per second on oxygen block (75% of original 30)
 var FUEL_REFILL = 25;
+var FUEL_BOUNCE = 5; // fuel gain on bounce off fuel block (at full-extended-jump landing speed)
+var OXY_BOUNCE = 5;  // oxy gain on bounce off oxy block (at full-extended-jump landing speed)
+var BOUNCE_REFUEL_SCALE = Math.sqrt(HOLD_GRAVITY) / JUMP_FORCE; // |VY| * this * BOUNCE = amount
 var FUEL_DRAIN_RATE = 60;
 var OXY_DRAIN_BLOCK_RATE = 60;
 var KILL_SPEED_THRESHOLD = 28; // head-on collision kill speed

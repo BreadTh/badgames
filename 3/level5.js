@@ -31,6 +31,7 @@ function KC(height) {
 function JP5(h) { return [B.JUMP, S.FLAT, h]; }
 
 LEVELS.push({
+  id: 4,
   name: "The Divide",
   gridColors: [0x553366, 0x664477],
   rows: concat(

@@ -1,4 +1,5 @@
 LEVELS.push({
+  id: 1,
   name: "Shattered Highway",
   gridColors: [0x887766, 0x998877],
   rows: concat(

@@ -17,6 +17,7 @@ var OX6 = [B.OXYGEN, S.FLAT];
 var W6 = [B.WIN_TUNNEL, S.FLAT];
 
 LEVELS.push({
+  id: 5,
   name: "Breathless",
   gridColors: [0x664422, 0x775533],
   rows: concat(

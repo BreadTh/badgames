@@ -1,3 +1,30 @@
+// ---- REFUEL PROXIMITY ----
+// Computes fuel/oxy efficiency (0-1) based on distance to nearest fuel/oxy block.
+// 100% if player collision box overlaps block, tapers to 0% at half a block gap.
+var _rpFuel = 0, _rpOxy = 0;
+function refuelProximity(px, py, rowLo, rowHi) {
+  var halfW = PLAYER_W / 2;
+  var maxGap = LANE_WIDTH * 0.5;
+  var reach = halfW + LANE_WIDTH;
+  var laneL = xToLane(px - reach);
+  var laneR = xToLane(px + reach);
+  _rpFuel = 0; _rpOxy = 0;
+  for (var ri = rowLo; ri <= rowHi; ri++) {
+    for (var li = laneL; li <= laneR; li++) {
+      var col = getColumn(ri, li);
+      for (var bi = 0; bi < col.length; bi++) {
+        if (Math.abs(blockTop(col[bi]) - py) < 0.2) {
+          var lc = laneToX(li);
+          var gap = Math.max(0, Math.abs(px - lc) - halfW - LANE_WIDTH / 2);
+          var eff = gap <= 0 ? 1.0 : Math.max(0, 1.0 - gap / maxGap);
+          if (col[bi].type === BLOCK.FUEL && eff > _rpFuel) _rpFuel = eff;
+          if (col[bi].type === BLOCK.OXYGEN && eff > _rpOxy) _rpOxy = eff;
+        }
+      }
+    }
+  }
+}
+
 // ---- COLLISION HELPERS ----
 // Player is 4 points: BL, BR, TL, TR of an upright rectangle
 // BL = (playerX - PLAYER_W/2, playerY)
@@ -64,7 +91,7 @@ function win() {
   winShipVZ = 0;
   winShipZ = 0;
   if (!isPlayback) {
-    clearedLevels[currentLevel] = true;
+    clearedLevels[levelKey(currentLevel)] = true;
     localStorage.setItem('spaceRunnerCleared', JSON.stringify(clearedLevels));
   }
   SFX.win();
@@ -200,6 +227,13 @@ function updatePlayer(dt) {
   var canJump = grounded || coyoteTimer > 0;
   if ((inp['Space']) && canJump && hasPropellant && !noControl) {
     if (!started) { started = true; startedTime = performance.now(); }
+    // Liftoff bonus from fuel/oxy blocks
+    if (grounded) {
+      playerRowsRange();
+      refuelProximity(playerX, playerY, _prLo, _prHi);
+      if (_rpFuel > 0) fuel = Math.min(100, fuel + FUEL_BOUNCE * _rpFuel);
+      if (_rpOxy > 0) oxygen = Math.min(100, oxygen + OXY_BOUNCE * _rpOxy);
+    }
     var speedPctJ = playerSpeed === 0 ? 1 : playerSpeed / MAX_SPEED;
     playerVY = JUMP_FORCE * (0.75 + 0.25 * speedPctJ);
     grounded = false;
@@ -282,7 +316,7 @@ function updatePlayer(dt) {
     }
 
     // ---- Y MOVE (gravity/jump) ----
-    if (!grounded && playerVY > JUMP_CUT_VY && !inp['Space']) {
+    if (!grounded && playerVY > JUMP_CUT_VY && !inp['Space'] && !padSustain) {
       playerVY = JUMP_CUT_VY;
     }
     if (!grounded) {
@@ -302,12 +336,14 @@ function updatePlayer(dt) {
       else if (!nearGround && playerVY <= 0) glideLockedIn = true;
       var gliding = inp['Space'] && playerVY <= 0 && fuel > 0 && (!nearGround || glideLockedIn);
       var sustaining = inp['Space'] && playerVY > 0 && hasPropellant;
-      isSustaining = sustaining;
+      isSustaining = sustaining || padSustain;
       isGliding = gliding;
-      if (padSustain && (playerVY <= 0 || fuel <= 0)) padSustain = false;
+      if (padSustain && (playerVY <= 0 || (fuel <= 0 && oxygen <= 0))) padSustain = false;
       if (gliding) {
         if (!debugInvincible) fuel = Math.max(0, fuel - FUEL_GLIDE_COST * subDt);
       } else if (sustaining) {
+        spendFuel(FUEL_AIR_COST * subDt);
+      } else if (padSustain) {
         spendFuel(FUEL_AIR_COST * subDt);
       }
       var grav = (sustaining || padSustain) ? GRAVITY * HOLD_GRAVITY : gliding ? GRAVITY * GLIDE_GRAVITY : GRAVITY;
@@ -322,7 +358,6 @@ function updatePlayer(dt) {
         var landLo = Math.min(prevLo, _prLo), landHi = Math.max(prevHi, _prHi);
         var landXL = playerX - hw, landXR = playerX + hw;
         var landSurface = null;
-        var landBlock = null;
         for (var lri = landLo; lri <= landHi; lri++) {
           for (var lxi = 0; lxi < 2; lxi++) {
             var col = getColumnAtX(lri, lxi === 0 ? landXL : landXR);
@@ -331,21 +366,69 @@ function updatePlayer(dt) {
               if (prevY >= surf - 0.1 && playerY <= surf) {
                 if (landSurface === null || surf > landSurface) {
                   landSurface = surf;
-                  landBlock = col[lbi];
                 }
               }
             }
           }
         }
         if (landSurface !== null) {
-          if (landBlock.type === BLOCK.KILL && !debugInvincible) {
+          // Collect all block types at the landing surface
+          var landHasKill = false, landHasJump = false;
+          var landHasDrainFuel = false, landHasDrainOxy = false;
+          for (var lri2 = landLo; lri2 <= landHi; lri2++) {
+            for (var lxi2 = 0; lxi2 < 2; lxi2++) {
+              var col2 = getColumnAtX(lri2, lxi2 === 0 ? landXL : landXR);
+              for (var lbi2 = 0; lbi2 < col2.length; lbi2++) {
+                if (Math.abs(blockTop(col2[lbi2]) - landSurface) < 0.01) {
+                  switch (col2[lbi2].type) {
+                    case BLOCK.KILL: landHasKill = true; break;
+                    case BLOCK.JUMP: landHasJump = true; break;
+                    case BLOCK.DRAIN_FUEL: landHasDrainFuel = true; break;
+                    case BLOCK.DRAIN_OXY: landHasDrainOxy = true; break;
+                  }
+                }
+              }
+            }
+          }
+          // Fuel/oxy with proximity taper
+          refuelProximity(playerX, landSurface, landLo, landHi);
+          if (landHasKill && !debugInvincible) {
             deathVX = playerVX; deathVY = -playerVY; deathVZ = -playerSpeed * 0.7;
             deathBloomX = 0; deathBloomY = 1; deathBloomZ = 0;
             die('kill'); return;
           }
           airDrainFuel = false; airDrainOxy = false;
-          var landIsDrain = landBlock.type === BLOCK.DRAIN_FUEL || landBlock.type === BLOCK.DRAIN_OXY;
           playerY = landSurface;
+          // Bounce refuel/drain effects
+          var bounceVel = Math.abs(playerVY) * BOUNCE_REFUEL_SCALE;
+          var bBoostMax = MAX_SPEED * (1 + BOOST_SPEED_PCT);
+          var bRefillMult = playerSpeed <= KILL_SPEED_THRESHOLD
+            ? 1 + playerSpeed / KILL_SPEED_THRESHOLD
+            : playerSpeed <= MAX_SPEED
+            ? 2 + (playerSpeed - KILL_SPEED_THRESHOLD) / (MAX_SPEED - KILL_SPEED_THRESHOLD)
+            : 3 + 0.5 * (playerSpeed - MAX_SPEED) / (bBoostMax - MAX_SPEED);
+          if (_rpFuel > 0) {
+            fuel = Math.min(100, fuel + FUEL_BOUNCE * bounceVel * bRefillMult * _rpFuel);
+            SFX.fuelPickup();
+          }
+          if (_rpOxy > 0) {
+            oxygen = Math.min(100, oxygen + OXY_BOUNCE * bounceVel * bRefillMult * _rpOxy);
+            SFX.oxyPickup();
+          }
+          if (landHasDrainFuel) airDrainFuel = true;
+          if (landHasDrainOxy) airDrainOxy = true;
+          // Jump pad (after refuel so landing on pad+fuel gives both)
+          if (landHasJump && hasPropellant) {
+            playerVY = JUMP_FORCE;
+            grounded = false;
+            padSustain = true;
+            isSustaining = true;
+            isGliding = false;
+            spawnSparks(playerX, landSurface + 0.1, playerZ, 0.6);
+            spawnJumpSparks(playerX, landSurface, playerZ);
+            SFX.jumpPad();
+            continue;
+          }
           spawnSparks(playerX, landSurface, playerZ, Math.min(1, Math.abs(playerVY) / 15));
           SFX.bounce();
           var BOUNCE_ACCEL_IMPULSE = ACCEL_RATE * 0.032;
@@ -364,19 +447,11 @@ function updatePlayer(dt) {
             spawnSparks(playerX, landSurface + 0.1, playerZ, 0.6);
             spawnJumpSparks(playerX, landSurface, playerZ);
             SFX.jump();
-            if (landIsDrain) {
-              if (landBlock.type === BLOCK.DRAIN_FUEL) airDrainFuel = true;
-              else airDrainOxy = true;
-            }
           } else {
             var bounceV = -playerVY * BOUNCE_FACTOR;
             if (bounceV > 1.5) {
               playerVY = bounceV;
               coyoteTimer = COYOTE_TIME;
-              if (landIsDrain) {
-                if (landBlock.type === BLOCK.DRAIN_FUEL) airDrainFuel = true;
-                else airDrainOxy = true;
-              }
             } else {
               playerVY = 0;
               grounded = true;
@@ -516,20 +591,31 @@ function updatePlayer(dt) {
   // ---- GROUND CHECKS ----
   playerRowsRange();
   var gLo = _prLo, gHi = _prHi;
-  // Pick the block the player is standing on for ground effects
-  var block = null;
-  for (var gi = gLo; gi <= gHi; gi++) {
-    var col = getColumnAtX(gi, playerX);
-    for (var bi = 0; bi < col.length; bi++) {
-      if (Math.abs(blockTop(col[bi]) - playerY) < 0.2) {
-        block = col[bi]; break;
+  // Collect all block types the player is standing on
+  var gHasKill = false, gHasJump = false, gHasWin = false;
+  var gHasDrainFuel = false, gHasDrainOxy = false;
+  var checkXs = [playerX - hw, playerX, playerX + hw];
+  for (var ci = 0; ci < 3; ci++) {
+    for (var gi = gLo; gi <= gHi; gi++) {
+      var col = getColumnAtX(gi, checkXs[ci]);
+      for (var bi = 0; bi < col.length; bi++) {
+        if (Math.abs(blockTop(col[bi]) - playerY) < 0.2) {
+          switch (col[bi].type) {
+            case BLOCK.KILL: gHasKill = true; break;
+            case BLOCK.JUMP: gHasJump = true; break;
+            case BLOCK.DRAIN_FUEL: gHasDrainFuel = true; break;
+            case BLOCK.DRAIN_OXY: gHasDrainOxy = true; break;
+            case BLOCK.WIN_TUNNEL: gHasWin = true; break;
+          }
+        }
       }
     }
-    if (block) break;
   }
+  // Fuel/oxy with proximity taper
+  refuelProximity(playerX, playerY, gLo, gHi);
 
   // Win check — standing on or passing over any WIN_TUNNEL block
-  if (block && block.type === BLOCK.WIN_TUNNEL) {
+  if (gHasWin) {
     win();
   } else {
     for (var wi = gLo; wi <= gHi && state === 'playing'; wi++) {
@@ -542,77 +628,56 @@ function updatePlayer(dt) {
     }
   }
 
-  // Check for fuel/oxygen blocks within half a block left/right
-  var nearFuel = false, nearOxy = false;
-  if (grounded) {
-    var checkXs0 = playerX - LANE_WIDTH * 0.5, checkXs1 = playerX, checkXs2 = playerX + LANE_WIDTH * 0.5;
-    for (var ci = 0; ci < 3 && !(nearFuel && nearOxy); ci++) {
-      var cx = ci === 0 ? checkXs0 : ci === 1 ? checkXs1 : checkXs2;
-      for (var gi2 = gLo; gi2 <= gHi && !(nearFuel && nearOxy); gi2++) {
-        var col2 = getColumnAtX(gi2, cx);
-        for (var bi2 = 0; bi2 < col2.length; bi2++) {
-          if (Math.abs(blockTop(col2[bi2]) - playerY) < 0.2) {
-            if (col2[bi2].type === BLOCK.FUEL) nearFuel = true;
-            if (col2[bi2].type === BLOCK.OXYGEN) nearOxy = true;
-          }
-        }
-      }
-    }
-  }
-
-  // Speed multiplier for refueling: 100% at 0, 200% at kill speed, 300% at max
+  // Speed multiplier for refueling: 100% at 0, 200% at kill speed, 300% at max, 400% at boost max
+  var BOOST_MAX = MAX_SPEED * (1 + BOOST_SPEED_PCT);
   var refillMult = playerSpeed <= KILL_SPEED_THRESHOLD
     ? 1 + playerSpeed / KILL_SPEED_THRESHOLD
-    : 2 + (playerSpeed - KILL_SPEED_THRESHOLD) / (MAX_SPEED - KILL_SPEED_THRESHOLD);
+    : playerSpeed <= MAX_SPEED
+    ? 2 + (playerSpeed - KILL_SPEED_THRESHOLD) / (MAX_SPEED - KILL_SPEED_THRESHOLD)
+    : 3 + (playerSpeed - MAX_SPEED) / (BOOST_MAX - MAX_SPEED);
 
   // Ground block effects (only when grounded)
-  if (grounded && nearOxy) {
-    oxygen = Math.min(100, oxygen + OXY_REFILL * refillMult * dt);
+  if (grounded && _rpOxy > 0) {
+    oxygen = Math.min(100, oxygen + OXY_REFILL * _rpOxy * refillMult * dt);
     sndOxyPickupTimer -= dt;
     if (sndOxyPickupTimer <= 0) { SFX.oxyPickup(); sndOxyPickupTimer = 0.3; }
   }
-  if (grounded && nearFuel) {
-    fuel = Math.min(100, fuel + FUEL_REFILL * refillMult * dt);
+  if (grounded && _rpFuel > 0) {
+    fuel = Math.min(100, fuel + FUEL_REFILL * _rpFuel * refillMult * dt);
     sndFuelPickupTimer -= dt;
     if (sndFuelPickupTimer <= 0) { SFX.fuelPickup(); sndFuelPickupTimer = 0.3; }
   }
-  if (grounded && (!block || (block.type !== BLOCK.DRAIN_FUEL && block.type !== BLOCK.DRAIN_OXY))) {
+  if (grounded && !gHasDrainFuel && !gHasDrainOxy) {
     airDrainFuel = false; airDrainOxy = false;
   }
-  if (block && grounded) {
-    switch (block.type) {
-      case BLOCK.OXYGEN:
-      case BLOCK.FUEL:
-        break; // handled above
-      case BLOCK.KILL:
-        if (!debugInvincible) {
-          deathVX = playerVX; deathVY = -playerVY; deathVZ = -playerSpeed * 0.7;
-          deathBloomX = 0; deathBloomY = 1; deathBloomZ = 0;
-          die('kill');
-        }
-        break;
-      case BLOCK.JUMP:
-        if (fuel > 0) {
-          playerVY = JUMP_FORCE;
-          grounded = false;
-          padSustain = true;
-          SFX.jumpPad();
-        }
-        break;
-      case BLOCK.DRAIN_FUEL:
-        if (!debugInvincible) fuel = Math.max(0, fuel - FUEL_DRAIN_RATE * dt);
-        airDrainFuel = true;
-        sndDrainTimer -= dt;
-        if (sndDrainTimer <= 0) { SFX.drain(); sndDrainTimer = 0.4; }
-        break;
-      case BLOCK.DRAIN_OXY:
-        if (!debugInvincible) oxygen = Math.max(0, oxygen - OXY_DRAIN_BLOCK_RATE * dt);
-        airDrainOxy = true;
-        sndDrainTimer -= dt;
-        if (sndDrainTimer <= 0) { SFX.drain(); sndDrainTimer = 0.4; }
-        break;
+  if (grounded) {
+    if (gHasKill && !debugInvincible) {
+      deathVX = playerVX; deathVY = -playerVY; deathVZ = -playerSpeed * 0.7;
+      deathBloomX = 0; deathBloomY = 1; deathBloomZ = 0;
+      die('kill');
     }
-
+    if (gHasJump && hasPropellant) {
+      playerVY = JUMP_FORCE;
+      grounded = false;
+      padSustain = true;
+      isSustaining = true;
+      isGliding = false;
+      spawnSparks(playerX, playerY + 0.1, playerZ, 0.6);
+      spawnJumpSparks(playerX, playerY, playerZ);
+      SFX.jumpPad();
+    }
+    if (gHasDrainFuel) {
+      if (!debugInvincible) fuel = Math.max(0, fuel - FUEL_DRAIN_RATE * dt);
+      airDrainFuel = true;
+      sndDrainTimer -= dt;
+      if (sndDrainTimer <= 0) { SFX.drain(); sndDrainTimer = 0.4; }
+    }
+    if (gHasDrainOxy) {
+      if (!debugInvincible) oxygen = Math.max(0, oxygen - OXY_DRAIN_BLOCK_RATE * dt);
+      airDrainOxy = true;
+      sndDrainTimer -= dt;
+      if (sndDrainTimer <= 0) { SFX.drain(); sndDrainTimer = 0.4; }
+    }
   }
 
   // Airborne drain (persists from drain block until next contact)
@@ -644,7 +709,7 @@ function updatePlayer(dt) {
     } else {
       sndFallingWas = false;
       // Track safe position for debug revive (not on kill/drain blocks)
-      if (!block || (block.type !== BLOCK.KILL && block.type !== BLOCK.DRAIN_FUEL && block.type !== BLOCK.DRAIN_OXY)) {
+      if (!gHasKill && !gHasDrainFuel && !gHasDrainOxy) {
         safeX = playerX; safeY = playerY; safeZ = playerZ;
       }
     }

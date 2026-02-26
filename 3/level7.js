@@ -41,6 +41,7 @@ var R12D = [DF7,DF7_1,DF7,DF7_1, DFHR(),DFHR(),DFHR(),DFHR(),DFHR(),DFHR(), DFHR
 var DS = [DF7,DF7_1,DF7,DF7_1,DF7, DF7_1,DF7,DF7_1,DF7,DF7_1, DF7,DF7_1,DF7,DF7_1,DF7, DF7_1,DF7,DF7_1,DF7,DF7_1];
 
 LEVELS.push({
+  id: 6,
   name: "Skyline",
   gridColors: [0x225544, 0x336655],
   rows: concat(

@@ -22,6 +22,7 @@ var W4 = [B.WIN_TUNNEL, S.FLAT];    // win tunnel h=0
 function JP(h) { return [B.JUMP, S.FLAT, h]; }
 
 LEVELS.push({
+  id: 3,
   name: "Vertigo",
   gridColors: [0x225566, 0x336677],
   rows: concat(

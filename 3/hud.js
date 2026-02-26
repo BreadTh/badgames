@@ -257,12 +257,19 @@ function drawHud(dt) {
     var deathScoreText = 'SCORE: ' + score.toLocaleString();
     if (isNewBest) deathScoreText += '  NEW BEST!';
     hudCtx.fillText(deathScoreText, cx, cy + 56);
+    var controlsY = cy + 80;
+    if (isNewBest && prevBest > 0) {
+      hudCtx.fillStyle = 'rgba(255, 255, 255, ' + (ta * 0.5) + ')';
+      hudCtx.font = '14px monospace';
+      hudCtx.fillText('previous: ' + prevBest.toLocaleString(), cx, cy + 74);
+      controlsY = cy + 96;
+    }
     hudCtx.fillStyle = 'rgba(255, 255, 255, ' + (ta * 0.7) + ')';
     hudCtx.font = '16px monospace';
     if (!isPlayback) {
-      hudCtx.fillText('R restart | ESC menu | X download', cx, cy + 80);
+      hudCtx.fillText('R restart | ESC menu | X download', cx, controlsY);
     } else {
-      hudCtx.fillText('R restart recording | ESC exit', cx, cy + 80);
+      hudCtx.fillText('R restart recording | ESC exit', cx, controlsY);
     }
     hudCtx.textAlign = 'left';
   } else if ((state === 'winning' || state === 'won') && screenFade > 0) {
@@ -327,8 +334,14 @@ function drawHud(dt) {
         hudCtx.font = 'bold 20px monospace';
         var scoreText = 'SCORE: ' + score.toLocaleString();
         if (isNewBest) scoreText += '  NEW BEST!';
-        else { var best = bestScores['' + currentLevel]; if (best) scoreText += '  BEST: ' + best.toLocaleString(); }
+        else { var best = bestScores[levelKey(currentLevel)]; if (best) scoreText += '  BEST: ' + best.toLocaleString(); }
         hudCtx.fillText(scoreText, cx, ly);
+        if (isNewBest && prevBest > 0) {
+          ly += 18;
+          hudCtx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+          hudCtx.font = '14px monospace';
+          hudCtx.fillText('previous: ' + prevBest.toLocaleString(), cx, ly);
+        }
         ly += 24;
         // Controls hint: slow fade in after score appears
         var hintFade = Math.min(1, (wt - scoreTime) / 0.5);

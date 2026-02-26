@@ -101,12 +101,13 @@ function buildMenu() {
   var total = 0;
   for (var i = 0; i < LEVELS.length; i++) {
     var btn = document.createElement('button');
-    btn.className = 'level-btn' + (clearedLevels[i] ? ' cleared' : '');
+    var lid = levelKey(i);
+    btn.className = 'level-btn' + (clearedLevels[lid] ? ' cleared' : '');
     var nameSpan = document.createElement('span');
     nameSpan.className = 'level-name';
     nameSpan.textContent = (i + 1) + '. ' + LEVELS[i].name;
     btn.appendChild(nameSpan);
-    var best = bestScores['' + i];
+    var best = bestScores[lid];
     if (best) {
       total += best;
       var scoreSpan = document.createElement('span');
@@ -119,14 +120,14 @@ function buildMenu() {
     row.className = 'level-row';
     row.appendChild(btn);
     // Add play/download buttons if a best-score recording exists
-    if (localStorage.getItem('spaceRunnerRec-' + i)) {
+    if (localStorage.getItem('spaceRunnerRec-' + lid)) {
       var recBtns = document.createElement('span');
       recBtns.className = 'rec-btns';
       var playBtn = document.createElement('span');
       playBtn.className = 'rec-btn rec-play';
       playBtn.title = 'Play best recording';
       playBtn.onclick = (function(idx) { return function(e) {
-        var text = localStorage.getItem('spaceRunnerRec-' + idx);
+        var text = localStorage.getItem('spaceRunnerRec-' + levelKey(idx));
         if (!text) return;
         var data = parseRecording(text);
         if (data) startPlayback(data);
@@ -135,13 +136,13 @@ function buildMenu() {
       dlBtn.className = 'rec-btn rec-dl';
       dlBtn.title = 'Download best recording';
       dlBtn.onclick = (function(idx) { return function(e) {
-        var text = localStorage.getItem('spaceRunnerRec-' + idx);
+        var text = localStorage.getItem('spaceRunnerRec-' + levelKey(idx));
         if (!text) return;
         var blob = new Blob([text], { type: 'text/plain' });
         var url = URL.createObjectURL(blob);
         var a = document.createElement('a');
         a.href = url;
-        var ts = (localStorage.getItem('spaceRunnerRecDate-' + idx) || new Date().toISOString()).replace(/[:.]/g, '-').slice(0, 19);
+        var ts = (localStorage.getItem('spaceRunnerRecDate-' + levelKey(idx)) || new Date().toISOString()).replace(/[:.]/g, '-').slice(0, 19);
         var name = LEVELS[idx].name.replace(/[^a-zA-Z0-9]/g, '_');
         var player = (playerNameInput.value || 'Unknown').replace(/[^a-zA-Z0-9]/g, '_');
         a.download = ts + '-' + name + '-' + player + '.run';
@@ -331,7 +332,7 @@ window.addEventListener('keydown', function(e) {
     if (menuTypeBuffer.indexOf('deletealldata') !== -1) {
       localStorage.removeItem('spaceRunnerCleared');
       localStorage.removeItem('spaceRunnerScores');
-      for (var ri = 0; ri < LEVELS.length; ri++) { localStorage.removeItem('spaceRunnerRec-' + ri); localStorage.removeItem('spaceRunnerRecDate-' + ri); }
+      for (var ri = 0; ri < LEVELS.length; ri++) { var rk = levelKey(ri); localStorage.removeItem('spaceRunnerRec-' + rk); localStorage.removeItem('spaceRunnerRecDate-' + rk); }
       clearedLevels = {};
       bestScores = {};
       menuTypeBuffer = '';
@@ -455,14 +456,15 @@ function calcAndSaveScore() {
   }
   score = Math.floor(100 * scoreDist * scoreTimeMult * scoreFuelMult * scoreOxyMult);
   if (isPlayback) { isNewBest = false; return; }
-  var key = '' + currentLevel;
+  var key = levelKey(currentLevel);
+  prevBest = bestScores[key] || 0;
   isNewBest = !bestScores[key] || score > bestScores[key];
   if (isNewBest) {
     bestScores[key] = score;
     localStorage.setItem('spaceRunnerScores', JSON.stringify(bestScores));
   }
   // Save recording if it beats the previous recording's score (or no recording exists)
-  var recKey = 'spaceRunnerRec-' + currentLevel;
+  var recKey = 'spaceRunnerRec-' + key;
   var prevRec = localStorage.getItem(recKey);
   var prevRecScore = 0;
   if (prevRec) {
@@ -472,7 +474,7 @@ function calcAndSaveScore() {
   if (score > prevRecScore) {
     try {
       localStorage.setItem(recKey, serializeRecording(currentLevel));
-      localStorage.setItem('spaceRunnerRecDate-' + currentLevel, new Date().toISOString());
+      localStorage.setItem('spaceRunnerRecDate-' + key, new Date().toISOString());
     } catch (e) { /* storage full — silently skip */ }
   }
 }
@@ -678,7 +680,7 @@ window.bootGame = function() {
     UNOFFICIAL = true;
     var _wm = document.createElement('div');
     _wm.id = 'unofficial-watermark';
-    _wm.textContent = 'UNOFFICIAL';
+    _wm.textContent = 'Piracy >:D';
     document.body.appendChild(_wm);
   }
   init3D();

@@ -454,7 +454,7 @@ function updateEngineTrail(dt) {
 
   // Sustain/glide at wing tips
   var spaceHeld = inp['Space'] || inp['KeySpace'];
-  if (!grounded && spaceHeld && hasProp) {
+  if (!grounded && (spaceHeld || padSustain) && hasProp) {
     var downDir = new THREE.Vector3(0, -1 + playerVY * 0.15, 0).normalize();
     var tipL = shipMesh.localToWorld(new THREE.Vector3(-1.30, 0.10, 0.5));
     var tipR = shipMesh.localToWorld(new THREE.Vector3( 1.30, 0.10, 0.5));

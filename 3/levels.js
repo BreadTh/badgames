@@ -78,4 +78,22 @@ function concat() {
   return out;
 }
 
+// Helper for tunnel: floor at ground + ceiling at height
+function TUN(ceilH, floorType, ceilType) {
+  floorType = floorType || B.NORMAL;
+  ceilType = ceilType || B.NORMAL;
+  return [[floorType, S.FLAT, 0], [ceilType, S.FLAT, ceilH]];
+}
+
+// Helper: floor + block at height (stacked pillar with gap)
+function STACK(h1, h2, type) {
+  type = type || B.NORMAL;
+  return [[type, S.FLAT, h1], [type, S.FLAT, h2]];
+}
+
+// 20-wide flat row shorthand
+var F = [N,N,N,N,N, N,N,N,N,N, N,N,N,N,N, N,N,N,N,N];
+
 var LEVELS = [];
+
+function levelKey(idx) { return '' + LEVELS[idx].id; }

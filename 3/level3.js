@@ -15,6 +15,7 @@ var FU = [B.FUEL, S.FLAT];
 var W = [B.WIN_TUNNEL, S.FLAT];
 
 LEVELS.push({
+  id: 2,
   name: "Razor Run",
   gridColors: [0x881111, 0x991122],
   rows: concat(
