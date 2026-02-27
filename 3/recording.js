@@ -21,6 +21,7 @@ var playbackDragging = false;
 var playbackWasPlaying = false;
 var playbackShowPause = false;
 var playbackMarkers = []; // {ms, type} - jump, fuel, oxy, fueloxy, death, win
+var playbackRecText = null; // original .run text for download during playback
 
 // Map physical keys to logical codes
 var REC_KEY_MAP = {
@@ -222,6 +223,23 @@ function downloadRecording(levelIdx) {
   var player = (playerNameInput.value || 'Unknown').replace(/[^a-zA-Z0-9]/g, '_');
   var filename = ts + '-' + levelName + '-' + player + '.run';
   var blob = new Blob([text], { type: 'text/plain' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function downloadPlaybackRecording() {
+  if (!playbackRecText) return;
+  var ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  var levelName = LEVELS[playbackLevel].name.replace(/[^a-zA-Z0-9]/g, '_');
+  var player = (playerNameInput.value || 'Unknown').replace(/[^a-zA-Z0-9]/g, '_');
+  var filename = ts + '-' + levelName + '-' + player + '.run';
+  var blob = new Blob([playbackRecText], { type: 'text/plain' });
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a');
   a.href = url;
@@ -596,6 +614,7 @@ function stopPlayback() {
   isPlayback = false;
   playbackShowPause = false;
   playbackDragging = false;
+  playbackRecText = null;
   keys = {};
   playbackEvents = [];
   playbackIdx = 0;
@@ -628,6 +647,7 @@ function stopPlayback() {
         alert('Unknown level id in recording');
         return;
       }
+      playbackRecText = text;
       startPlayback(data);
     };
     reader.readAsText(file);

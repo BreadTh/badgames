@@ -133,7 +133,7 @@ function buildMenu() {
         var text = localStorage.getItem('spaceRunnerRec-' + levelKey(idx));
         if (!text) return;
         var data = parseRecording(text);
-        if (data) startPlayback(data);
+        if (data) { playbackRecText = text; startPlayback(data); }
       }; })(i);
       var dlBtn = document.createElement('span');
       dlBtn.className = 'rec-btn rec-dl';
@@ -224,6 +224,10 @@ window.addEventListener('keydown', function(e) {
       if (paused) stopContinuousSounds();
       return;
     }
+    if (e.code === 'KeyX' && !e.repeat) {
+      downloadPlaybackRecording();
+      return;
+    }
     if (e.code !== 'Escape') return;
   }
   if (e.code === 'KeyQ' && !e.repeat) {
@@ -246,6 +250,13 @@ window.addEventListener('keydown', function(e) {
   // Download recording on X key after death/win
   if (e.code === 'KeyX' && !e.repeat && !isPlayback && (state === 'dead' || state === 'won')) {
     downloadRecording(currentLevel);
+  }
+  // Replay recording on K key after death/win
+  if (e.code === 'KeyK' && !e.repeat && !isPlayback && (state === 'dead' || state === 'won')) {
+    stopRecording();
+    var recText = serializeRecording(currentLevel);
+    var recData = parseRecording(recText);
+    if (recData) { playbackRecText = recText; startPlayback(recData); }
   }
   // cheat code detection — works in any state
   debugTypeBuffer += e.key.toLowerCase();

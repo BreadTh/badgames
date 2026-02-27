@@ -267,9 +267,9 @@ function drawHud(dt) {
     hudCtx.fillStyle = 'rgba(255, 255, 255, ' + (ta * 0.7) + ')';
     hudCtx.font = '16px monospace';
     if (!isPlayback) {
-      hudCtx.fillText('R restart | ESC menu | X download', cx, controlsY);
+      hudCtx.fillText('R restart | ESC menu | X download | K replay', cx, controlsY);
     } else {
-      hudCtx.fillText('R restart recording | ESC exit', cx, controlsY);
+      hudCtx.fillText('R restart recording | ESC exit | X download', cx, controlsY);
     }
     hudCtx.textAlign = 'left';
   } else if ((state === 'winning' || state === 'won') && screenFade > 0) {
@@ -349,9 +349,9 @@ function drawHud(dt) {
           hudCtx.fillStyle = 'rgba(255, 255, 255, ' + (hintFade * 0.7) + ')';
           hudCtx.font = '16px monospace';
           if (!isPlayback) {
-            hudCtx.fillText('R restart | ESC menu | X download', cx, ly);
+            hudCtx.fillText('R restart | ESC menu | X download | K replay', cx, ly);
           } else {
-            hudCtx.fillText('R restart recording | ESC exit', cx, ly);
+            hudCtx.fillText('R restart recording | ESC exit | X download', cx, ly);
           }
         }
       }
@@ -511,6 +511,13 @@ function drawPlaybackBar() {
   hudCtx.fillText(timeStr, cx, midY + 4);
   var timeW = hudCtx.measureText(timeStr).width;
   cx += timeW + pad;
+
+  // Download hint
+  hudCtx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+  hudCtx.font = '12px monospace';
+  var dlStr = 'X: download';
+  hudCtx.fillText(dlStr, cx, midY + 4);
+  cx += hudCtx.measureText(dlStr).width + pad;
 
   // Scrub bar (remaining space, fills bar height)
   var scrubX = cx + 4;

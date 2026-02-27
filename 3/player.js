@@ -40,6 +40,14 @@ function playerRowsRange() {
   _prLo = zToRow(playerZ + hd);
   _prHi = zToRow(playerZ - hd);
 }
+// Narrow Z probe for effects (charging, draining, kill, jump pad, win).
+// 5% of PLAYER_D, centered 20% back from front edge.
+function playerEffectRowsRange() {
+  var probeCenter = playerZ - 0.3 * PLAYER_D;
+  var probeHalf = 0.025 * PLAYER_D;
+  _prLo = zToRow(probeCenter + probeHalf);
+  _prHi = zToRow(probeCenter - probeHalf);
+}
 
 // Check if a point (x, y) is inside any block's solid region at a given row
 function pointInBlock(x, y, rowIdx) {
@@ -237,10 +245,10 @@ function updatePlayer(dt) {
     if (!started) { started = true; startedTime = performance.now(); }
     // Liftoff bonus from fuel/oxy blocks
     if (grounded) {
-      playerRowsRange();
+      playerEffectRowsRange();
       refuelProximity(playerX, playerY, _prLo, _prHi);
-      if (_rpFuel > 0) fuel = Math.min(100, fuel + FUEL_BOUNCE * _rpFuel);
-      if (_rpOxy > 0) oxygen = Math.min(100, oxygen + OXY_BOUNCE * _rpOxy);
+      if (_rpFuel > 0) { fuel = Math.min(100, fuel + FUEL_BOUNCE * _rpFuel); SFX.fuelPickup(); }
+      if (_rpOxy > 0) { oxygen = Math.min(100, oxygen + OXY_BOUNCE * _rpOxy); SFX.oxyPickup(); }
     }
     var speedPctJ = playerSpeed === 0 ? 1 : playerSpeed / MAX_SPEED;
     playerVY = JUMP_FORCE * (0.75 + 0.25 * speedPctJ);
@@ -381,10 +389,12 @@ function updatePlayer(dt) {
           }
         }
         if (landSurface !== null) {
-          // Collect all block types at the landing surface
+          // Collect all block types at the landing surface (narrow Z probe)
+          playerEffectRowsRange();
+          var effLo = _prLo, effHi = _prHi;
           var landHasKill = false, landHasJump = false;
           var landHasDrainFuel = false, landHasDrainOxy = false;
-          for (var lri2 = landLo; lri2 <= landHi; lri2++) {
+          for (var lri2 = effLo; lri2 <= effHi; lri2++) {
             for (var lxi2 = 0; lxi2 < 2; lxi2++) {
               var col2 = getColumnAtX(lri2, lxi2 === 0 ? landXL : landXR);
               for (var lbi2 = 0; lbi2 < col2.length; lbi2++) {
@@ -400,7 +410,7 @@ function updatePlayer(dt) {
             }
           }
           // Fuel/oxy with proximity taper
-          refuelProximity(playerX, landSurface, landLo, landHi);
+          refuelProximity(playerX, landSurface, effLo, effHi);
           if (landHasKill && !debugInvincible) {
             deathVX = playerVX; deathVY = -playerVY; deathVZ = -playerSpeed * 0.7;
             deathBloomX = 0; deathBloomY = 1; deathBloomZ = 0;
@@ -598,8 +608,8 @@ function updatePlayer(dt) {
     recordSync(playerX, playerY, playerZ, playerSpeed, playerVY, playerVX);
   }
 
-  // ---- GROUND CHECKS ----
-  playerRowsRange();
+  // ---- GROUND CHECKS (narrow Z probe for effects) ----
+  playerEffectRowsRange();
   var gLo = _prLo, gHi = _prHi;
   // Collect all block types the player is standing on
   var gHasKill = false, gHasJump = false, gHasWin = false;
@@ -625,14 +635,17 @@ function updatePlayer(dt) {
   refuelProximity(playerX, playerY, gLo, gHi);
 
   // Win check — standing on or passing over any WIN_TUNNEL block
-  if (gHasWin) {
-    win();
-  } else {
-    for (var wi = gLo; wi <= gHi && state === 'playing'; wi++) {
-      var wCol = getColumnAtX(wi, playerX);
-      for (var wbi = 0; wbi < wCol.length; wbi++) {
-        if (wCol[wbi].type === BLOCK.WIN_TUNNEL && blockTop(wCol[wbi]) <= playerY) {
-          win(); break;
+  // Skip during playback: win is triggered by the recorded W event
+  if (!isPlayback) {
+    if (gHasWin) {
+      win();
+    } else {
+      for (var wi = gLo; wi <= gHi && state === 'playing'; wi++) {
+        var wCol = getColumnAtX(wi, playerX);
+        for (var wbi = 0; wbi < wCol.length; wbi++) {
+          if (wCol[wbi].type === BLOCK.WIN_TUNNEL && blockTop(wCol[wbi]) <= playerY) {
+            win(); break;
+          }
         }
       }
     }
