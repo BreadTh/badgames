@@ -311,7 +311,7 @@ var GLIDE_RAMP = [
 ];
 var SUSTAIN_COUNT = 40;
 var GLIDE_COUNT = 30;
-var sustainFlame = null, glideFlame = null;
+var sustainFlame = null, glideFlame = null, oxyGlideFlame = null;
 
 // Jump sparks ramp: bright white-yellow -> orange -> gone
 var JUMP_SPARK_RAMP = [
@@ -329,6 +329,7 @@ function initEngineTrail() {
   cruiseFlame = _initFlamePool(CRUISE_FLAME_COUNT, 0.4, 0.65, CRUISE_RAMP);
   sustainFlame = _initFlamePool(SUSTAIN_COUNT, 0.3, 0.7, SUSTAIN_RAMP);
   glideFlame = _initFlamePool(GLIDE_COUNT, 0.45, 0.8, GLIDE_RAMP);
+  oxyGlideFlame = _initFlamePool(GLIDE_COUNT, 0.45, 0.8, SUSTAIN_RAMP);
   jumpSparkPool = _initFlamePool(JUMP_SPARK_COUNT, 0.2, 0.8, JUMP_SPARK_RAMP);
 }
 
@@ -392,6 +393,7 @@ function updateEngineTrail(dt) {
   _updateFlamePool(cruiseFlame, dt);
   _updateFlamePool(sustainFlame, dt);
   _updateFlamePool(glideFlame, dt);
+  _updateFlamePool(oxyGlideFlame, dt);
   _updateFlamePool(jumpSparkPool, dt);
 
   if (!alive) {
@@ -429,7 +431,7 @@ function updateEngineTrail(dt) {
   var tZ = nZ + backWorld.z * 5;
 
   var hasProp = fuel > 0 || oxygen > 0;
-  if (accelHeld && fuel > 0 && oxygen > 0 && !brakeHeld) {
+  if (accelHeld && fuel > 0 && !brakeHeld) {
     _spawnFlame(accelFlame, ACCEL_FLAME_SPAWN, 0.03, 0.5 + speedPct * 0.8, 5.6, nX, nY, nZ, backWorld, playerVX, pX, pY, pZ);
     accelFlameLight.position.set(lX, lY, lZ);
     accelFlameLight.target.position.set(tX, tY, tZ);
@@ -463,9 +465,12 @@ function updateEngineTrail(dt) {
     if (playerVY > 0) {
       _spawnFlame(sustainFlame, 2, 0.01, 3.5, 16.0, tipL.x, tipL.y, tipL.z, downDir, playerVX, ptL.x, ptL.y, ptL.z);
       _spawnFlame(sustainFlame, 2, 0.01, 3.5, 16.0, tipR.x, tipR.y, tipR.z, downDir, playerVX, ptR.x, ptR.y, ptR.z);
-    } else {
+    } else if (fuel > 0) {
       _spawnFlame(glideFlame, 2, 0.03, 5.0, 12.0, tipL.x, tipL.y, tipL.z, downDir, playerVX, ptL.x, ptL.y, ptL.z);
       _spawnFlame(glideFlame, 2, 0.03, 5.0, 12.0, tipR.x, tipR.y, tipR.z, downDir, playerVX, ptR.x, ptR.y, ptR.z);
+    } else {
+      _spawnFlame(oxyGlideFlame, 2, 0.03, 5.0, 12.0, tipL.x, tipL.y, tipL.z, downDir, playerVX, ptL.x, ptL.y, ptL.z);
+      _spawnFlame(oxyGlideFlame, 2, 0.03, 5.0, 12.0, tipR.x, tipR.y, tipR.z, downDir, playerVX, ptR.x, ptR.y, ptR.z);
     }
     prevTipL = { x: tipL.x, y: tipL.y, z: tipL.z };
     prevTipR = { x: tipR.x, y: tipR.y, z: tipR.z };
@@ -553,6 +558,7 @@ function clearAllParticles() {
   _clearPool(cruiseFlame);
   _clearPool(sustainFlame);
   _clearPool(glideFlame);
+  _clearPool(oxyGlideFlame);
   _clearPool(jumpSparkPool);
   if (typeof accelFlameLight !== 'undefined') accelFlameLight.intensity = 0;
   if (typeof cruiseFlameLight !== 'undefined') cruiseFlameLight.intensity = 0;

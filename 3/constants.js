@@ -133,6 +133,7 @@ var winLiftBoost = 0;
 var winShipVZ = 0;   // ship's forward velocity during win (visual only)
 var winShipZ = 0;    // ship's forward offset during win (visual only)
 var stuckTimer = 0;
+var stuckZ = 0;
 
 // Debug
 var debugMode = false;

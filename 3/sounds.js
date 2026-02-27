@@ -218,7 +218,9 @@ function updateSounds(dt) {
   }
 
   // Accel: raw pressed throttle — heavy roughness
-  var accelHeld = (keys['ArrowUp'] || keys['KeyW']) && fuel > 0 && oxygen > 0;
+  var noOxy = oxygen <= 0;
+  var sndInp = (noOxy && frozenKeys) ? frozenKeys : keys;
+  var accelHeld = (sndInp['ArrowUp'] || sndInp['KeyW']) && (fuel > 0 || oxygen > 0);
   if (sndAccel) {
     if (accelHeld && (grounded || !grounded)) {
       var aPct = playerSpeed / MAX_SPEED;
@@ -248,7 +250,7 @@ function updateSounds(dt) {
   }
 
   // Decel: mechanical friction — pitch and volume rise with speed
-  var decelHeld = (keys['ArrowDown'] || keys['KeyS']);
+  var decelHeld = (sndInp['ArrowDown'] || sndInp['KeyS']);
   if (sndDecel) {
     var brakePct = playerSpeed / MAX_SPEED;
     if (decelHeld && playerSpeed > 0) {

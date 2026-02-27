@@ -68,11 +68,14 @@ var playerNameInput = document.getElementById('player-name');
 
 
 function generateRandomName() {
-  var a = Math.floor(Math.random() * WORDLIST.length);
-  var b;
-  do { b = Math.floor(Math.random() * WORDLIST.length); } while (b === a);
-  function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
-  return cap(WORDLIST[a]) + cap(WORDLIST[b]);
+  var syl = ['da','ri','to','na','lu','me','shi','zo','ne','ve','do','fi','ra','ki','mu','no','se','ta','li','bo'];
+  function word() {
+    var n = 2 + Math.floor(Math.random() * 2);
+    var s = '';
+    for (var i = 0; i < n; i++) s += syl[Math.floor(Math.random() * syl.length)];
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  }
+  return word() + word();
 }
 
 function ensurePlayerName() {
@@ -371,6 +374,7 @@ function startLevelImmediate(idx) {
   oxygen = 100;
   grounded = true;
   stuckTimer = 0;
+  stuckZ = 0;
   levelTimerMax = LEVELS[idx].rows.length * 0.1;
   levelTimer = levelTimerMax;
   score = 0;
@@ -384,6 +388,7 @@ function startLevelImmediate(idx) {
   if (cruiseFlame) { cruiseFlame.points.material.opacity = 0.65; cruiseFlame.points.material.size = 0.4; }
   if (sustainFlame) { sustainFlame.points.material.opacity = 0.7; sustainFlame.points.material.size = 0.3; }
   if (glideFlame) { glideFlame.points.material.opacity = 0.8; glideFlame.points.material.size = 0.45; }
+  if (oxyGlideFlame) { oxyGlideFlame.points.material.opacity = 0.8; oxyGlideFlame.points.material.size = 0.45; }
   deathTimer = 0;
   deathStoppedTimer = 0;
   deathFade = 0;
@@ -652,6 +657,7 @@ function gameLoop() {
       if (cruiseFlame) { cruiseFlame.points.material.opacity = 0.65 * flameFade; cruiseFlame.points.material.size = 0.4 * flameFade; }
       if (sustainFlame) { sustainFlame.points.material.opacity = 0.7 * flameFade; sustainFlame.points.material.size = 0.3 * flameFade; }
       if (glideFlame) { glideFlame.points.material.opacity = 0.8 * flameFade; glideFlame.points.material.size = 0.45 * flameFade; }
+      if (oxyGlideFlame) { oxyGlideFlame.points.material.opacity = 0.8 * flameFade; oxyGlideFlame.points.material.size = 0.45 * flameFade; }
     }
     updateCamera();
     updateChunks();
@@ -687,16 +693,22 @@ window.bootGame = function() {
   initHud();
   // Menu starts hidden (HTML has display:none), show it now behind the overlay
   showMenuImmediate();
-  // Fade out loading text, then reveal menu
-  var start = performance.now();
-  function fadeOut() {
-    var t = Math.min(1, (performance.now() - start) / FADE_BOOT_OUT);
-    fadeLoadingEl.style.opacity = 1 - t;
-    if (t < 1) requestAnimationFrame(fadeOut);
-    else {
-      fadeLoadingEl.style.display = 'none';
-      fadeFromBlack(FADE_BOOT_IN);
+  // Fade out loading text from current opacity, then reveal menu
+  var startOpacity = parseFloat(fadeLoadingEl.style.opacity) || 0;
+  if (startOpacity === 0) {
+    fadeLoadingEl.style.display = 'none';
+    fadeFromBlack(FADE_BOOT_IN);
+  } else {
+    var start = performance.now();
+    function fadeOut() {
+      var t = Math.min(1, (performance.now() - start) / FADE_BOOT_OUT);
+      fadeLoadingEl.style.opacity = startOpacity * (1 - t);
+      if (t < 1) requestAnimationFrame(fadeOut);
+      else {
+        fadeLoadingEl.style.display = 'none';
+        fadeFromBlack(FADE_BOOT_IN);
+      }
     }
+    requestAnimationFrame(fadeOut);
   }
-  requestAnimationFrame(fadeOut);
 };

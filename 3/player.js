@@ -335,9 +335,10 @@ function updatePlayer(dt) {
       if (!inp['Space']) glideLockedIn = false;
       else if (!nearGround && playerVY <= 0) glideLockedIn = true;
       var gliding = inp['Space'] && playerVY <= 0 && fuel > 0 && (!nearGround || glideLockedIn);
+      var oxyGliding = inp['Space'] && playerVY <= 0 && fuel <= 0 && oxygen > 0 && (!nearGround || glideLockedIn);
       var sustaining = inp['Space'] && playerVY > 0 && hasPropellant;
       isSustaining = sustaining || padSustain;
-      isGliding = gliding;
+      isGliding = gliding || oxyGliding;
       if (padSustain && (playerVY <= 0 || (fuel <= 0 && oxygen <= 0))) padSustain = false;
       if (gliding) {
         if (!debugInvincible) fuel = Math.max(0, fuel - FUEL_GLIDE_COST * subDt);
@@ -721,13 +722,20 @@ function updatePlayer(dt) {
   // Fell off map
   if (playerY < -20) die('fall');
 
-  // Death conditions — stranded when out of resources and stopped
-  if ((noOxygen || !hasPropellant) && playerSpeed <= 0 && grounded && !debugInvincible) {
-    stuckTimer += dt;
+  // Death conditions — stranded when out of resources and not making progress
+  if ((noOxygen || !hasPropellant) && !debugInvincible) {
+    var zProgress = Math.abs(playerZ - stuckZ);
+    if (zProgress > 1) {
+      stuckTimer = 0;
+      stuckZ = playerZ;
+    } else {
+      stuckTimer += dt;
+    }
     var strandedDelay = !hasPropellant ? 3 : 1;
     if (stuckTimer > strandedDelay) die('stranded');
   } else {
     stuckTimer = 0;
+    stuckZ = playerZ;
   }
 }
 

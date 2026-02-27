@@ -59,7 +59,7 @@ var DITHER_DISCARD =
   'float dist = vWorldZ - playerZ;\n' +
   'float abovePlayer = max(0.0, vWorldY - playerY);\n' +
   // Behind fade: same height or below = 2 blocks back, above player = sooner
-  'float behindStart = 2.0 - abovePlayer * 0.33;\n' +
+  'float behindStart = max(0.0, 2.0 - abovePlayer * 1.5);\n' +
   'float behindFade = clamp((dist - behindStart) / 1.0, 0.0, 1.0);\n' +
   // Angle fade: per-pixel, works ahead and behind (only for blocks above)
   'float angleStr = 0.0;\n' +
