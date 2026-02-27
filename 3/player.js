@@ -167,6 +167,14 @@ function updatePlayer(dt) {
         playerSpeed = Math.max(0, playerSpeed - DECEL_RATE * airSpdMult * dt);
       }
     }
+  } else if (inp['ArrowDown'] || inp['KeyS']) {
+    // No propellant — braking still works via frozen keys
+    if (grounded) {
+      playerSpeed = Math.max(0, playerSpeed - DECEL_RATE * dt);
+    } else {
+      var airSpdMult = AIR_SPEED_CONTROL * (2 - playerSpeed / MAX_SPEED);
+      playerSpeed = Math.max(0, playerSpeed - DECEL_RATE * airSpdMult * dt);
+    }
   }
 
   // Boost decay: bleed speed back to MAX_SPEED when not accelerating
@@ -207,7 +215,7 @@ function updatePlayer(dt) {
   if (!hasPropellant) lateralAccel *= 0.25;
   var lateralFriction = grounded ? 8 : 0.5;
   var steering = false;
-  var canSteer = grounded || hasPropellant;
+  var canSteer = hasPropellant;
   if (canSteer && (inp['ArrowLeft'] || inp['KeyA'])) { playerVX -= lateralAccel * dt; steering = true; if (!started) { started = true; startedTime = performance.now(); } }
   if (canSteer && (inp['ArrowRight'] || inp['KeyD'])) { playerVX += lateralAccel * dt; steering = true; if (!started) { started = true; startedTime = performance.now(); } }
   if (steering && started) spendFuel(0.8 * dt);
@@ -316,7 +324,7 @@ function updatePlayer(dt) {
     }
 
     // ---- Y MOVE (gravity/jump) ----
-    if (!grounded && playerVY > JUMP_CUT_VY && !inp['Space'] && !padSustain) {
+    if (!grounded && playerVY > JUMP_CUT_VY && (!hasPropellant || (!inp['Space'] && !padSustain))) {
       playerVY = JUMP_CUT_VY;
     }
     if (!grounded) {
@@ -435,7 +443,8 @@ function updatePlayer(dt) {
           var BOUNCE_ACCEL_IMPULSE = ACCEL_RATE * 0.032;
           var BOUNCE_DECEL_IMPULSE = DECEL_RATE * 0.032;
           if ((inp['ArrowUp'] || inp['KeyW']) && hasPropellant) {
-            playerSpeed = Math.min(MAX_SPEED, playerSpeed + BOUNCE_ACCEL_IMPULSE);
+            var boostMax = MAX_SPEED * (1 + BOOST_SPEED_PCT);
+            playerSpeed = Math.min(boostMax, playerSpeed + BOUNCE_ACCEL_IMPULSE);
             accel = true;
           }
           if (inp['ArrowDown'] || inp['KeyS']) {
