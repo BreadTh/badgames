@@ -16,15 +16,15 @@
   <div id="total-score"></div>
   <button id="load-playback-btn" class="level-btn" style="margin-top:1em;justify-content:center">Load Playback</button>
   <input type="file" id="playback-file" accept=".run" style="display:none">
+  <a id="more-games" href="../">play more games?</a>
 </div>
-<a id="more-games" href="../">play more games?</a>
 <canvas id="game-canvas"></canvas>
 <div id="custom-cursor"></div>
 <div id="hud">
   <canvas id="hud-canvas"></canvas>
 </div>
 <script>
-var GAME_VERSION = '1.2.0';
+var GAME_VERSION = '1.2.1';
 var UNOFFICIAL = false;
 document.getElementById('version').textContent = 'v' + GAME_VERSION;
 document.getElementById('main-css').href = 'style.css?v=' + GAME_VERSION;
