@@ -43,6 +43,12 @@ var JUMP_CUT_VY = 10; // velocity cap when space released early
 var AIR_CONTROL = 0.3; // fraction of normal move speed
 var AIR_CONTROL_FREE = 0.45; // air control when not sustaining
 var AIR_SPEED_CONTROL = 0.25; // fraction of accel/decel rate while airborne
+var LATERAL_ACCEL = 40;     // base lateral acceleration
+var LATERAL_MAX = 12;       // base max lateral velocity
+var LATERAL_FRICTION = 8;   // ground lateral friction
+var LATERAL_AIR_FRICTION = 0.5; // air lateral friction
+var STEER_FUEL_COST = 0.8;  // fuel/sec while actively steering
+var NO_PROP_STEER_MULT = 0.25; // lateral accel multiplier with no propellant
 var BOUNCE_FACTOR = 0.45;
 var COYOTE_TIME = 0.12; // seconds after leaving ground where jump still works
 var VIEW_DISTANCE = 160; // how many rows ahead to show
@@ -78,6 +84,18 @@ var BOUNCE_REFUEL_SCALE = Math.sqrt(HOLD_GRAVITY) / JUMP_FORCE; // |VY| * this *
 var FUEL_DRAIN_RATE = 60;
 var OXY_DRAIN_BLOCK_RATE = 60;
 var KILL_SPEED_THRESHOLD = 28; // head-on collision kill speed
+var WALL_BOUNCE_THRESHOLD = 4;  // lateral velocity above this bounces off wall
+var WALL_GRIND_DECEL = 24;      // speed/sec lost while grinding against a wall
+var WALL_BOUNCE_REFLECT = 0.25; // fraction of lateral velocity reflected on wall bounce
+var COLLISION_SPEED_KEEP = 0.9; // forward speed multiplier on wall bounce / head bonk
+var BOUNCE_IMPULSE_FACTOR = 0.032; // landing impulse as fraction of accel/decel rate
+var DEATH_VZ_FACTOR = 0.7;   // fraction of forward speed transferred to death explosion
+var DEATH_VZ_REBOUND = 0.35; // fraction transferred when killed by front-face kill block
+var SND_PICKUP_INTERVAL = 0.3;    // seconds between repeated pickup sounds
+var SND_DRAIN_INTERVAL = 0.4;     // seconds between repeated drain sounds
+var SND_FUEL_WARN_INTERVAL = 1.0; // seconds between fuel warning beeps
+var SND_OXY_WARN_INTERVAL = 1.2;  // seconds between oxygen warning beeps
+var WARN_THRESHOLD = 20;          // resource % below which warnings play
 var PLAYER_H = 0.475;
 var PLAYER_W = 0.6; // collision width
 var PLAYER_D = 1.2; // collision depth (Z)
@@ -122,8 +140,7 @@ window.addEventListener('keyup', function(e) {
 });
 window.addEventListener('blur', function() { if (!isPlayback) keys = {}; });
 
-// Timers
-var deathTimer = 0;
+// Timers (deathTimer declared above with player state)
 var deathStoppedTimer = 0; // time since scroll stopped after death
 var deathFade = 0; // 0-1, ramps over 125ms after death for HUD gray transition
 var frozenDist = -1; // locked distance display (-1 = live)
@@ -150,7 +167,7 @@ var airDrainFuel = false;
 var airDrainOxy = false;
 
 // ---- HELPERS ----
-var LANE_CENTER = (LANES - 1) / 2; // 4.5 for 10 lanes
+var LANE_CENTER = (LANES - 1) / 2; // 9.5 for 20 lanes
 
 function laneToX(lane) {
   return (lane - LANE_CENTER) * LANE_WIDTH;

@@ -1,14 +1,14 @@
 // ---- REFUEL PROXIMITY ----
-// Computes fuel/oxy efficiency (0-1) based on distance to nearest fuel/oxy block.
-// 100% if player collision box overlaps block, tapers to 0% at half a block gap.
-var _rpFuel = 0, _rpOxy = 0;
+// Sets nearFuel/nearOxy (0-1) based on distance to nearest fuel/oxy block.
+// 1.0 if player collision box overlaps block, tapers to 0 at half a block gap.
+var nearFuel = 0, nearOxy = 0;
 function refuelProximity(px, py, rowLo, rowHi) {
   var halfW = PLAYER_W / 2;
   var maxGap = LANE_WIDTH * 0.5;
   var reach = halfW + LANE_WIDTH;
   var laneL = xToLane(px - reach);
   var laneR = xToLane(px + reach);
-  _rpFuel = 0; _rpOxy = 0;
+  nearFuel = 0; nearOxy = 0;
   for (var ri = rowLo; ri <= rowHi; ri++) {
     for (var li = laneL; li <= laneR; li++) {
       var col = getColumn(ri, li);
@@ -17,8 +17,8 @@ function refuelProximity(px, py, rowLo, rowHi) {
           var lc = laneToX(li);
           var gap = Math.max(0, Math.abs(px - lc) - halfW - LANE_WIDTH / 2);
           var eff = gap <= 0 ? 1.0 : Math.max(0, 1.0 - gap / maxGap);
-          if (col[bi].type === BLOCK.FUEL && eff > _rpFuel) _rpFuel = eff;
-          if (col[bi].type === BLOCK.OXYGEN && eff > _rpOxy) _rpOxy = eff;
+          if (col[bi].type === BLOCK.FUEL && eff > nearFuel) nearFuel = eff;
+          if (col[bi].type === BLOCK.OXYGEN && eff > nearOxy) nearOxy = eff;
         }
       }
     }
@@ -33,20 +33,20 @@ function refuelProximity(px, py, rowLo, rowHi) {
 // TR = (playerX + PLAYER_W/2, playerY + PLAYER_H)
 
 // Get all rows the player's Z extent overlaps
-// Returns into _prLo/_prHi globals to avoid allocation. Callers use for(r=_prLo;r<=_prHi;r++)
-var _prLo = 0, _prHi = 0;
+// Sets rowLo/rowHi globals. Callers use for(r=rowLo;r<=rowHi;r++)
+var rowLo = 0, rowHi = 0;
 function playerRowsRange() {
   var hd = PLAYER_D / 2;
-  _prLo = zToRow(playerZ + hd);
-  _prHi = zToRow(playerZ - hd);
+  rowLo = zToRow(playerZ + hd);
+  rowHi = zToRow(playerZ - hd);
 }
 // Narrow Z probe for effects (charging, draining, kill, jump pad, win).
 // 5% of PLAYER_D, centered 20% back from front edge.
 function playerEffectRowsRange() {
   var probeCenter = playerZ - 0.3 * PLAYER_D;
   var probeHalf = 0.025 * PLAYER_D;
-  _prLo = zToRow(probeCenter + probeHalf);
-  _prHi = zToRow(probeCenter - probeHalf);
+  rowLo = zToRow(probeCenter + probeHalf);
+  rowHi = zToRow(probeCenter - probeHalf);
 }
 
 // Check if a point (x, y) is inside any block's solid region at a given row
@@ -88,7 +88,7 @@ function die(reason) {
     shipMesh.visible = false;
   }
   calcAndSaveScore();
-  if (isRecording) { recordScore(); stopRecording(); }
+  if (isRecording) stopRecording();
 }
 
 function win() {
@@ -219,18 +219,18 @@ function updatePlayer(dt) {
   var airMult = sustainingX ? AIR_CONTROL : AIR_CONTROL_FREE;
   // Slower = more air control (2x at standstill, 1x at max speed)
   var steerScale = 0.5 + 0.5 * Math.pow(speedPctA, 0.8);
-  var lateralAccel = grounded ? 40 * steerScale : 40 * steerScale * airMult * (2 - speedPctA);
-  if (!hasPropellant) lateralAccel *= 0.25;
-  var lateralFriction = grounded ? 8 : 0.5;
+  var lateralAccel = grounded ? LATERAL_ACCEL * steerScale : LATERAL_ACCEL * steerScale * airMult * (2 - speedPctA);
+  if (!hasPropellant) lateralAccel *= NO_PROP_STEER_MULT;
+  var lateralFriction = grounded ? LATERAL_FRICTION : LATERAL_AIR_FRICTION;
   var steering = false;
   var canSteer = hasPropellant;
   if (canSteer && (inp['ArrowLeft'] || inp['KeyA'])) { playerVX -= lateralAccel * dt; steering = true; if (!started) { started = true; startedTime = performance.now(); } }
   if (canSteer && (inp['ArrowRight'] || inp['KeyD'])) { playerVX += lateralAccel * dt; steering = true; if (!started) { started = true; startedTime = performance.now(); } }
-  if (steering && started) spendFuel(0.8 * dt);
+  if (steering && started) spendFuel(STEER_FUEL_COST * dt);
   if (grounded && !(inp['ArrowLeft'] || inp['KeyA'] || inp['ArrowRight'] || inp['KeyD'])) {
     playerVX *= Math.max(0, 1 - lateralFriction * dt);
   }
-  var maxLateral = 12 * steerScale;
+  var maxLateral = LATERAL_MAX * steerScale;
   playerVX = Math.max(-maxLateral, Math.min(maxLateral, playerVX));
 
   // Coyote time (once per frame)
@@ -241,14 +241,14 @@ function updatePlayer(dt) {
   }
   // Jump initiation (once per frame)
   var canJump = grounded || coyoteTimer > 0;
-  if ((inp['Space']) && canJump && hasPropellant && !noControl) {
+  if ((inp['Space']) && canJump && hasPropellant) {
     if (!started) { started = true; startedTime = performance.now(); }
     // Liftoff bonus from fuel/oxy blocks
     if (grounded) {
       playerEffectRowsRange();
-      refuelProximity(playerX, playerY, _prLo, _prHi);
-      if (_rpFuel > 0) { fuel = Math.min(100, fuel + FUEL_BOUNCE * _rpFuel); SFX.fuelPickup(); }
-      if (_rpOxy > 0) { oxygen = Math.min(100, oxygen + OXY_BOUNCE * _rpOxy); SFX.oxyPickup(); }
+      refuelProximity(playerX, playerY, rowLo, rowHi);
+      if (nearFuel > 0) { fuel = Math.min(100, fuel + FUEL_BOUNCE * nearFuel); SFX.fuelPickup(); }
+      if (nearOxy > 0) { oxygen = Math.min(100, oxygen + OXY_BOUNCE * nearOxy); SFX.oxyPickup(); }
     }
     var speedPctJ = playerSpeed === 0 ? 1 : playerSpeed / MAX_SPEED;
     playerVY = JUMP_FORCE * (0.75 + 0.25 * speedPctJ);
@@ -276,7 +276,7 @@ function updatePlayer(dt) {
   for (var msi = 0; msi < subSteps; msi++) {
     // ---- SAVE ROWS BEFORE Z MOVE (for diagonal slip prevention) ----
     playerRowsRange();
-    var prevLo = _prLo, prevHi = _prHi;
+    var prevLo = rowLo, prevHi = rowHi;
 
     // ---- Z MOVE ----
     var prevZ = playerZ;
@@ -311,12 +311,12 @@ function updatePlayer(dt) {
           }
           if (blocked) {
             if (playerSpeed > KILL_SPEED_THRESHOLD && !debugInvincible) {
-              deathVX = playerVX; deathVY = playerVY; deathVZ = -playerSpeed * 0.7;
+              deathVX = playerVX; deathVY = playerVY; deathVZ = -playerSpeed * DEATH_VZ_FACTOR;
               deathBloomX = 0; deathBloomY = 0; deathBloomZ = -1;
               die('crash'); return;
             }
             if (frontKill && !debugInvincible) {
-              deathVX = playerVX; deathVY = playerVY; deathVZ = playerSpeed * 0.35;
+              deathVX = playerVX; deathVY = playerVY; deathVZ = playerSpeed * DEATH_VZ_REBOUND;
               deathBloomX = 0; deathBloomY = 0; deathBloomZ = 1;
               die('kill'); return;
             }
@@ -340,7 +340,7 @@ function updatePlayer(dt) {
       var nearGround = false;
       if (playerVY <= 0) {
         playerRowsRange();
-        for (var ng = _prLo; ng <= _prHi && !nearGround; ng++) {
+        for (var ng = rowLo; ng <= rowHi && !nearGround; ng++) {
           var ngCol = getColumnAtX(ng, playerX);
           for (var nbi = 0; nbi < ngCol.length; nbi++) {
             var gTop = blockTop(ngCol[nbi]);
@@ -372,7 +372,7 @@ function updatePlayer(dt) {
       // the player just flew past in Z — prevents false side collisions at step-downs
       if (playerVY <= 0) {
         playerRowsRange();
-        var landLo = Math.min(prevLo, _prLo), landHi = Math.max(prevHi, _prHi);
+        var landLo = Math.min(prevLo, rowLo), landHi = Math.max(prevHi, rowHi);
         var landXL = playerX - hw, landXR = playerX + hw;
         var landSurface = null;
         for (var lri = landLo; lri <= landHi; lri++) {
@@ -391,7 +391,7 @@ function updatePlayer(dt) {
         if (landSurface !== null) {
           // Collect all block types at the landing surface (narrow Z probe)
           playerEffectRowsRange();
-          var effLo = _prLo, effHi = _prHi;
+          var effLo = rowLo, effHi = rowHi;
           var landHasKill = false, landHasJump = false;
           var landHasDrainFuel = false, landHasDrainOxy = false;
           for (var lri2 = effLo; lri2 <= effHi; lri2++) {
@@ -412,7 +412,7 @@ function updatePlayer(dt) {
           // Fuel/oxy with proximity taper
           refuelProximity(playerX, landSurface, effLo, effHi);
           if (landHasKill && !debugInvincible) {
-            deathVX = playerVX; deathVY = -playerVY; deathVZ = -playerSpeed * 0.7;
+            deathVX = playerVX; deathVY = -playerVY; deathVZ = -playerSpeed * DEATH_VZ_FACTOR;
             deathBloomX = 0; deathBloomY = 1; deathBloomZ = 0;
             die('kill'); return;
           }
@@ -426,12 +426,12 @@ function updatePlayer(dt) {
             : playerSpeed <= MAX_SPEED
             ? 2 + (playerSpeed - KILL_SPEED_THRESHOLD) / (MAX_SPEED - KILL_SPEED_THRESHOLD)
             : 3 + 0.5 * (playerSpeed - MAX_SPEED) / (bBoostMax - MAX_SPEED);
-          if (_rpFuel > 0) {
-            fuel = Math.min(100, fuel + FUEL_BOUNCE * bounceVel * bRefillMult * _rpFuel);
+          if (nearFuel > 0) {
+            fuel = Math.min(100, fuel + FUEL_BOUNCE * bounceVel * bRefillMult * nearFuel);
             SFX.fuelPickup();
           }
-          if (_rpOxy > 0) {
-            oxygen = Math.min(100, oxygen + OXY_BOUNCE * bounceVel * bRefillMult * _rpOxy);
+          if (nearOxy > 0) {
+            oxygen = Math.min(100, oxygen + OXY_BOUNCE * bounceVel * bRefillMult * nearOxy);
             SFX.oxyPickup();
           }
           if (landHasDrainFuel) airDrainFuel = true;
@@ -450,8 +450,8 @@ function updatePlayer(dt) {
           }
           spawnSparks(playerX, landSurface, playerZ, Math.min(1, Math.abs(playerVY) / 15));
           SFX.bounce();
-          var BOUNCE_ACCEL_IMPULSE = ACCEL_RATE * 0.032;
-          var BOUNCE_DECEL_IMPULSE = DECEL_RATE * 0.032;
+          var BOUNCE_ACCEL_IMPULSE = ACCEL_RATE * BOUNCE_IMPULSE_FACTOR;
+          var BOUNCE_DECEL_IMPULSE = DECEL_RATE * BOUNCE_IMPULSE_FACTOR;
           if ((inp['ArrowUp'] || inp['KeyW']) && hasPropellant) {
             var boostMax = MAX_SPEED * (1 + BOOST_SPEED_PCT);
             playerSpeed = Math.min(boostMax, playerSpeed + BOUNCE_ACCEL_IMPULSE);
@@ -489,7 +489,7 @@ function updatePlayer(dt) {
         var lowestBot = Infinity;
         var bonked = false;
         var bonkedKill = false;
-        for (var bri = _prLo; bri <= _prHi; bri++) {
+        for (var bri = rowLo; bri <= rowHi; bri++) {
           for (var bxi = 0; bxi < 2; bxi++) {
             var col = getColumnAtX(bri, bxi === 0 ? bonkXL : bonkXR);
             for (var bbi = 0; bbi < col.length; bbi++) {
@@ -505,14 +505,14 @@ function updatePlayer(dt) {
         }
         if (bonked) {
           if (bonkedKill && !debugInvincible) {
-            deathVX = playerVX; deathVY = -playerVY; deathVZ = -playerSpeed * 0.7;
+            deathVX = playerVX; deathVY = -playerVY; deathVZ = -playerSpeed * DEATH_VZ_FACTOR;
             deathBloomX = 0; deathBloomY = -1; deathBloomZ = 0;
             die('kill'); return;
           }
           airDrainFuel = false; airDrainOxy = false;
           if (!sndBonkWas) { SFX.bonk(); recordEvent('BH'); }
           sndBonkWas = true;
-          playerSpeed *= 0.9;
+          playerSpeed *= COLLISION_SPEED_KEEP;
           playerVY = 0;
           playerY = lowestBot - PLAYER_H - 0.01;
         } else {
@@ -531,7 +531,7 @@ function updatePlayer(dt) {
     if (!xBlocked) {
       // Merge current rows with pre-Z-move rows to prevent diagonal corner-cutting
       playerRowsRange();
-      var sLo = Math.min(prevLo, _prLo), sHi = Math.max(prevHi, _prHi);
+      var sLo = Math.min(prevLo, rowLo), sHi = Math.max(prevHi, rowHi);
       var hitLeft = false, hitRight = false;
       var killLeft = false, killRight = false;
       for (var ssi = sLo; ssi <= sHi; ssi++) {
@@ -552,11 +552,9 @@ function updatePlayer(dt) {
           }
         }
       }
-      var WALL_BOUNCE_THRESHOLD = 4;
-      var WALL_GRIND_DECEL = 24;
       if (hitLeft && playerVX <= 0) {
         if (killLeft && !debugInvincible) {
-          deathVX = -playerVX; deathVY = playerVY; deathVZ = -playerSpeed * 0.7;
+          deathVX = -playerVX; deathVY = playerVY; deathVZ = -playerSpeed * DEATH_VZ_FACTOR;
           deathBloomX = 1; deathBloomY = 0; deathBloomZ = 0;
           die('kill'); return;
         }
@@ -565,8 +563,8 @@ function updatePlayer(dt) {
         sndHitLeftWas = true;
         playerX = prevX;
         if (Math.abs(playerVX) > WALL_BOUNCE_THRESHOLD) {
-          playerVX = Math.abs(playerVX) * 0.25;
-          playerSpeed *= 0.9;
+          playerVX = Math.abs(playerVX) * WALL_BOUNCE_REFLECT;
+          playerSpeed *= COLLISION_SPEED_KEEP;
         } else {
           playerVX = 0;
           playerSpeed = Math.max(0, playerSpeed - WALL_GRIND_DECEL * dt);
@@ -577,7 +575,7 @@ function updatePlayer(dt) {
       }
       if (hitRight && playerVX >= 0) {
         if (killRight && !debugInvincible) {
-          deathVX = -playerVX; deathVY = playerVY; deathVZ = -playerSpeed * 0.7;
+          deathVX = -playerVX; deathVY = playerVY; deathVZ = -playerSpeed * DEATH_VZ_FACTOR;
           deathBloomX = -1; deathBloomY = 0; deathBloomZ = 0;
           die('kill'); return;
         }
@@ -586,8 +584,8 @@ function updatePlayer(dt) {
         sndHitRightWas = true;
         playerX = prevX;
         if (Math.abs(playerVX) > WALL_BOUNCE_THRESHOLD) {
-          playerVX = -Math.abs(playerVX) * 0.25;
-          playerSpeed *= 0.9;
+          playerVX = -Math.abs(playerVX) * WALL_BOUNCE_REFLECT;
+          playerSpeed *= COLLISION_SPEED_KEEP;
         } else {
           playerVX = 0;
           playerSpeed = Math.max(0, playerSpeed - WALL_GRIND_DECEL * dt);
@@ -610,7 +608,7 @@ function updatePlayer(dt) {
 
   // ---- GROUND CHECKS (narrow Z probe for effects) ----
   playerEffectRowsRange();
-  var gLo = _prLo, gHi = _prHi;
+  var gLo = rowLo, gHi = rowHi;
   // Collect all block types the player is standing on
   var gHasKill = false, gHasJump = false, gHasWin = false;
   var gHasDrainFuel = false, gHasDrainOxy = false;
@@ -660,22 +658,22 @@ function updatePlayer(dt) {
     : 3 + (playerSpeed - MAX_SPEED) / (BOOST_MAX - MAX_SPEED);
 
   // Ground block effects (only when grounded)
-  if (grounded && _rpOxy > 0) {
-    oxygen = Math.min(100, oxygen + OXY_REFILL * _rpOxy * refillMult * dt);
+  if (grounded && nearOxy > 0) {
+    oxygen = Math.min(100, oxygen + OXY_REFILL * nearOxy * refillMult * dt);
     sndOxyPickupTimer -= dt;
-    if (sndOxyPickupTimer <= 0) { SFX.oxyPickup(); sndOxyPickupTimer = 0.3; }
+    if (sndOxyPickupTimer <= 0) { SFX.oxyPickup(); sndOxyPickupTimer = SND_PICKUP_INTERVAL; }
   }
-  if (grounded && _rpFuel > 0) {
-    fuel = Math.min(100, fuel + FUEL_REFILL * _rpFuel * refillMult * dt);
+  if (grounded && nearFuel > 0) {
+    fuel = Math.min(100, fuel + FUEL_REFILL * nearFuel * refillMult * dt);
     sndFuelPickupTimer -= dt;
-    if (sndFuelPickupTimer <= 0) { SFX.fuelPickup(); sndFuelPickupTimer = 0.3; }
+    if (sndFuelPickupTimer <= 0) { SFX.fuelPickup(); sndFuelPickupTimer = SND_PICKUP_INTERVAL; }
   }
   if (grounded && !gHasDrainFuel && !gHasDrainOxy) {
     airDrainFuel = false; airDrainOxy = false;
   }
   if (grounded) {
     if (gHasKill && !debugInvincible) {
-      deathVX = playerVX; deathVY = -playerVY; deathVZ = -playerSpeed * 0.7;
+      deathVX = playerVX; deathVY = -playerVY; deathVZ = -playerSpeed * DEATH_VZ_FACTOR;
       deathBloomX = 0; deathBloomY = 1; deathBloomZ = 0;
       die('kill');
     }
@@ -692,14 +690,14 @@ function updatePlayer(dt) {
     if (gHasDrainFuel) {
       if (!debugInvincible) fuel = Math.max(0, fuel - FUEL_DRAIN_RATE * dt);
       airDrainFuel = true;
-      sndDrainTimer -= dt;
-      if (sndDrainTimer <= 0) { SFX.drain(); sndDrainTimer = 0.4; }
     }
     if (gHasDrainOxy) {
       if (!debugInvincible) oxygen = Math.max(0, oxygen - OXY_DRAIN_BLOCK_RATE * dt);
       airDrainOxy = true;
+    }
+    if (gHasDrainFuel || gHasDrainOxy) {
       sndDrainTimer -= dt;
-      if (sndDrainTimer <= 0) { SFX.drain(); sndDrainTimer = 0.4; }
+      if (sndDrainTimer <= 0) { SFX.drain(); sndDrainTimer = SND_DRAIN_INTERVAL; }
     }
   }
 
@@ -708,7 +706,7 @@ function updatePlayer(dt) {
     if (airDrainFuel && !debugInvincible) fuel = Math.max(0, fuel - FUEL_DRAIN_RATE * dt);
     if (airDrainOxy && !debugInvincible) oxygen = Math.max(0, oxygen - OXY_DRAIN_BLOCK_RATE * dt);
     sndDrainTimer -= dt;
-    if (sndDrainTimer <= 0) { SFX.drain(); sndDrainTimer = 0.4; }
+    if (sndDrainTimer <= 0) { SFX.drain(); sndDrainTimer = SND_DRAIN_INTERVAL; }
   }
 
   // Fall if no ground below — check all rows × both X edges
@@ -716,7 +714,7 @@ function updatePlayer(dt) {
     playerRowsRange();
     var grXL = playerX - hw, grXR = playerX + hw;
     var bestSurface = null;
-    for (var gri = _prLo; gri <= _prHi; gri++) {
+    for (var gri = rowLo; gri <= rowHi; gri++) {
       for (var gxi = 0; gxi < 2; gxi++) {
         var col = getColumnAtX(gri, gxi === 0 ? grXL : grXR);
         for (var bi = 0; bi < col.length; bi++) {

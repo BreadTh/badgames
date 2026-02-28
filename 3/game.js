@@ -141,18 +141,8 @@ function buildMenu() {
       dlBtn.onclick = (function(idx) { return function(e) {
         var text = localStorage.getItem('spaceRunnerRec-' + levelKey(idx));
         if (!text) return;
-        var blob = new Blob([text], { type: 'text/plain' });
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href = url;
-        var ts = (localStorage.getItem('spaceRunnerRecDate-' + levelKey(idx)) || new Date().toISOString()).replace(/[:.]/g, '-').slice(0, 19);
-        var name = LEVELS[idx].name.replace(/[^a-zA-Z0-9]/g, '_');
-        var player = (playerNameInput.value || 'Unknown').replace(/[^a-zA-Z0-9]/g, '_');
-        a.download = ts + '-' + name + '-' + player + '.run';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        var ts = localStorage.getItem('spaceRunnerRecDate-' + levelKey(idx));
+        downloadTextFile(text, idx, ts);
       }; })(i);
       recBtns.appendChild(playBtn);
       recBtns.appendChild(dlBtn);
@@ -394,12 +384,12 @@ function startLevelImmediate(idx) {
   shipDitherUniform.value = 0;
   flameLifeScale = 1;
   winStarSpeed = 1;
-  if (accelFlame) { accelFlame.points.material.opacity = 0.9; accelFlame.points.material.size = 0.55; }
-  if (oxyAccelFlame) { oxyAccelFlame.points.material.opacity = 0.9; oxyAccelFlame.points.material.size = 0.55; }
-  if (cruiseFlame) { cruiseFlame.points.material.opacity = 0.65; cruiseFlame.points.material.size = 0.4; }
-  if (sustainFlame) { sustainFlame.points.material.opacity = 0.7; sustainFlame.points.material.size = 0.3; }
-  if (glideFlame) { glideFlame.points.material.opacity = 0.8; glideFlame.points.material.size = 0.45; }
-  if (oxyGlideFlame) { oxyGlideFlame.points.material.opacity = 0.8; oxyGlideFlame.points.material.size = 0.45; }
+  _resetPoolMaterial(accelFlame);
+  _resetPoolMaterial(oxyAccelFlame);
+  _resetPoolMaterial(cruiseFlame);
+  _resetPoolMaterial(sustainFlame);
+  _resetPoolMaterial(glideFlame);
+  _resetPoolMaterial(oxyGlideFlame);
   deathTimer = 0;
   deathStoppedTimer = 0;
   deathFade = 0;
@@ -489,6 +479,7 @@ function calcAndSaveScore() {
   }
   if (score > prevRecScore) {
     try {
+      recordScore(); // embed score in recording before serializing
       localStorage.setItem(recKey, serializeRecording(currentLevel));
       localStorage.setItem('spaceRunnerRecDate-' + key, new Date().toISOString());
     } catch (e) { /* storage full — silently skip */ }
@@ -663,12 +654,11 @@ function gameLoop() {
       shipDitherUniform.value = Math.min(1, shipDitherUniform.value + dt / (SHIP_DITHER_DURATION * 5));
       var flameFade = 1 - shipDitherUniform.value;
       flameLifeScale = 1 + shipDitherUniform.value * 3;
-      if (accelFlame) { accelFlame.points.material.opacity = 0.9 * flameFade; accelFlame.points.material.size = 0.55 * flameFade; }
-      if (oxyAccelFlame) { oxyAccelFlame.points.material.opacity = 0.9 * flameFade; oxyAccelFlame.points.material.size = 0.55 * flameFade; }
-      if (cruiseFlame) { cruiseFlame.points.material.opacity = 0.65 * flameFade; cruiseFlame.points.material.size = 0.4 * flameFade; }
-      if (sustainFlame) { sustainFlame.points.material.opacity = 0.7 * flameFade; sustainFlame.points.material.size = 0.3 * flameFade; }
-      if (glideFlame) { glideFlame.points.material.opacity = 0.8 * flameFade; glideFlame.points.material.size = 0.45 * flameFade; }
-      if (oxyGlideFlame) { oxyGlideFlame.points.material.opacity = 0.8 * flameFade; oxyGlideFlame.points.material.size = 0.45 * flameFade; }
+      var _fadePools = [accelFlame, oxyAccelFlame, cruiseFlame, sustainFlame, glideFlame, oxyGlideFlame];
+      for (var fi = 0; fi < _fadePools.length; fi++) {
+        var fp = _fadePools[fi];
+        if (fp) { fp.points.material.opacity = fp.initOpacity * flameFade; fp.points.material.size = fp.initSize * flameFade; }
+      }
     }
     updateCamera();
     updateChunks();
@@ -678,7 +668,7 @@ function gameLoop() {
       state = 'won';
       wonTime = 0;
       calcAndSaveScore();
-      if (isRecording) { recordScore(); stopRecording(); }
+      if (isRecording) stopRecording();
     }
     if (state === 'won') wonTime += dt;
   }

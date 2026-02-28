@@ -289,22 +289,22 @@ function updateSounds(dt) {
   }
 
   // Fuel warning
-  if (fuel < 20 && fuel > 0) {
+  if (fuel < WARN_THRESHOLD && fuel > 0) {
     sndFuelWarnTimer -= dt;
     if (sndFuelWarnTimer <= 0) {
       SFX.fuelWarn();
-      sndFuelWarnTimer = 1.0;
+      sndFuelWarnTimer = SND_FUEL_WARN_INTERVAL;
     }
   } else {
     sndFuelWarnTimer = 0;
   }
 
   // Oxygen warning
-  if (oxygen < 20 && oxygen > 0) {
+  if (oxygen < WARN_THRESHOLD && oxygen > 0) {
     sndOxyWarnTimer -= dt;
     if (sndOxyWarnTimer <= 0) {
       SFX.oxyWarn();
-      sndOxyWarnTimer = 1.2;
+      sndOxyWarnTimer = SND_OXY_WARN_INTERVAL;
     }
   } else {
     sndOxyWarnTimer = 0;

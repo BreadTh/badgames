@@ -246,17 +246,6 @@ var blockGeo = (function() {
   geo.setIndex(idx);
   return geo;
 })();
-function blockExistsAt(level, rowIdx, lane, h) {
-  var row = getRow(level, rowIdx);
-  if (!row) return false;
-  if (lane < 0 || lane >= LANES) return false;
-  var col = row[lane] || [];
-  for (var i = 0; i < col.length; i++) {
-    if ((col[i].h || 0) === h) return true;
-  }
-  return false;
-}
-
 // ---- REMAPPED GEOMETRY FOR MERGED RENDERING ----
 var remappedGeoCache = {};
 function getRemappedGeo(mask) {

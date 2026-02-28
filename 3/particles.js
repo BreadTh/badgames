@@ -275,7 +275,7 @@ function _initFlamePool(count, size, opacity, ramp) {
   var points = new THREE.Points(geo, mat);
   points.frustumCulled = false;
   scene.add(points);
-  return { points: points, ages: ages, lifeRates: lifeRates, velocities: velocities, idx: 0, count: count, ramp: ramp };
+  return { points: points, ages: ages, lifeRates: lifeRates, velocities: velocities, idx: 0, count: count, ramp: ramp, initSize: size, initOpacity: opacity };
 }
 
 // Accel ramp: bright yellow -> orange -> red
@@ -534,6 +534,12 @@ function updateDust(dt) {
     }
   }
   dustParticles.geometry.attributes.position.needsUpdate = true;
+}
+
+function _resetPoolMaterial(pool) {
+  if (!pool) return;
+  pool.points.material.opacity = pool.initOpacity;
+  pool.points.material.size = pool.initSize;
 }
 
 function _clearPool(pool) {

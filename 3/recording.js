@@ -216,9 +216,8 @@ function serializeRecording(levelIdx) {
   return header + events + rowData;
 }
 
-function downloadRecording(levelIdx) {
-  var text = serializeRecording(levelIdx);
-  var ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+function downloadTextFile(text, levelIdx, timestamp) {
+  var ts = (timestamp || new Date().toISOString()).replace(/[:.]/g, '-').slice(0, 19);
   var levelName = LEVELS[levelIdx].name.replace(/[^a-zA-Z0-9]/g, '_');
   var player = (playerNameInput.value || 'Unknown').replace(/[^a-zA-Z0-9]/g, '_');
   var filename = ts + '-' + levelName + '-' + player + '.run';
@@ -233,21 +232,13 @@ function downloadRecording(levelIdx) {
   URL.revokeObjectURL(url);
 }
 
+function downloadRecording(levelIdx) {
+  downloadTextFile(serializeRecording(levelIdx), levelIdx);
+}
+
 function downloadPlaybackRecording() {
   if (!playbackRecText) return;
-  var ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  var levelName = LEVELS[playbackLevel].name.replace(/[^a-zA-Z0-9]/g, '_');
-  var player = (playerNameInput.value || 'Unknown').replace(/[^a-zA-Z0-9]/g, '_');
-  var filename = ts + '-' + levelName + '-' + player + '.run';
-  var blob = new Blob([playbackRecText], { type: 'text/plain' });
-  var url = URL.createObjectURL(blob);
-  var a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  downloadTextFile(playbackRecText, playbackLevel);
 }
 
 // ---- PARSING ----
